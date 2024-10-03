@@ -1,0 +1,47 @@
+{
+    "os": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.4",
+    "heartbeatAt": "2024-10-02T10:14:57.882596",
+    "startedAt": "2024-10-02T10:14:56.467847",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "<python with no main file>",
+    "codePathLocal": null,
+    "git": {
+        "remote": "https://github.com/mackelab/smc_rnns.git",
+        "commit": "096d47009806acc7ae1ab400febb0dc3014fb29b"
+    },
+    "email": null,
+    "root": "C:/Users/kaleab.belay/Documents/Project/smc_rnns",
+    "host": "ICM-KARAL-WF002",
+    "username": "kaleab.belay",
+    "executable": "c:\\Users\\kaleab.belay\\.conda\\envs\\py3\\python.exe",
+    "cpu_count": 24,
+    "cpu_count_logical": 32,
+    "cpu_freq": {
+        "current": 3000.0,
+        "min": 0.0,
+        "max": 3000.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 3000.0,
+            "min": 0.0,
+            "max": 3000.0
+        }
+    ],
+    "disk": {},
+    "gpu": "NVIDIA GeForce RTX 4070",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA GeForce RTX 4070",
+            "memory_total": 12878610432
+        }
+    ],
+    "memory": {
+        "total": 63.69602584838867
+    }
+}
