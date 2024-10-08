@@ -143,7 +143,7 @@ def train_VAE(
                             eval_task.s[0].T.unsqueeze(0), 
                             neuromodulators=True
                         )
-                        kl_div = compute_KL_divergence(X_pred, eval_task.data[0])
+                        kl_div = compute_KL_divergence(X_pred, eval_task.data[0].T)
                         if sync_wandb:
                             wandb.log({"KL Div": kl_div})
                     else:

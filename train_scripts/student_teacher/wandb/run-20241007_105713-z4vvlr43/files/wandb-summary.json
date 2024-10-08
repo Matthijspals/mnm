@@ -1,0 +1,1 @@
+{"loss": 69116440.0, "ll": -69116440.0, "likelihood_data": 69098360.0, "likelihood_latent": 16581.01171875, "entropy": 14.171788215637207, "alpha": 0.7850344777107239, "noise_z": NaN, "noise_x": NaN, "noise_e": 0.09999999403953552, "lr": 0.00025, "_timestamp": 1728291438.5863051, "_runtime": 5.498279094696045, "_step": 3, "_wandb": {"runtime": 4}}

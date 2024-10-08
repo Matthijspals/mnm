@@ -141,7 +141,7 @@ class Transition(nn.Module):
         )
         return z
 
-    def get_rates(self, z, u=None):
+    def get_rates(self, z, u=None, nm=None, additive=False):
         """Transform latents to neuron activity
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
@@ -154,6 +154,13 @@ class Transition(nn.Module):
         X = torch.einsum("Nz,BzTK->BNTK", m, z)
         if u is not None:
             X += torch.einsum("Nu,BuTK->BNTK", self.Wu, u)
+   
+        # if multiplicative neuromodulation is enabled, apply neuromodulation
+        if nm is not None and additive is False: 
+            X *= nm.view(X.shape[0], 1, 1, 1)
+        elif nm is not None: 
+            X += nm.view(X.shape[0], 1, 1, 1) 
+        
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
         return R
 

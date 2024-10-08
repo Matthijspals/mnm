@@ -5,7 +5,9 @@ from torch.nn.utils.parametrizations import orthogonal
 
 from initialize_parameterize import *
 from vi_rnn.transitions.transitions import Transition
-from vi_rnn.transitions.nmrnn import NMRNNTransition
+from vi_rnn.transitions.rank_scaling import RankScalingTransition
+from vi_rnn.transitions.firing_rate_scaling import FiringRateScalingTransition
+from vi_rnn.transitions.additive_input import AdditiveInputTransition
 
 class LRRNN(nn.Module):
     """
@@ -124,8 +126,9 @@ class LRRNN(nn.Module):
             if params["clipped"] and params["activation"] == "relu":
                 params["activation"] = "clipped_relu"
 
-        if params["neuromodulators"]:
-            self.transition = NMRNNTransition(
+        if params["neuromodulators"] and params["neuromodulation_type"] == "rank":
+            print("Using rank-scaling neuromodulation")
+            self.transition = RankScalingTransition(
                 self.d_z,
                 self.d_u,
                 self.d_N,
@@ -137,10 +140,42 @@ class LRRNN(nn.Module):
                 m_norm=params["m_norm"],
                 weight_scaler=params["weight_scaler"],
                 train_latent_bias=params["train_latent_bias"],
-                train_neuron_bias=params["train_neuron_bias"],
-                nm_params = params["rank_scaling_params"]
+                train_neuron_bias=params["train_neuron_bias"]
+            )
+        elif params["neuromodulators"] and params["neuromodulation_type"] == "firing_rate":
+            print("Using firing rate scaling neuromodulation")
+            self.transition = FiringRateScalingTransition(
+                self.d_z,
+                self.d_u,
+                self.d_N,
+                nonlinearity=params["activation"],
+                exp_par=params["exp_par"],
+                shared_tau=params["shared_tau"],
+                weight_dist=params["weight_dist"],
+                m_orth=params["orth"],
+                m_norm=params["m_norm"],
+                weight_scaler=params["weight_scaler"],
+                train_latent_bias=params["train_latent_bias"],
+                train_neuron_bias=params["train_neuron_bias"]
+            )
+        elif params["neuromodulators"] and params["neuromodulation_type"] == "additive":
+            print("Using additive input neuromodulation")
+            self.transition = AdditiveInputTransition(
+                self.d_z,
+                self.d_u,
+                self.d_N,
+                nonlinearity=params["activation"],
+                exp_par=params["exp_par"],
+                shared_tau=params["shared_tau"],
+                weight_dist=params["weight_dist"],
+                m_orth=params["orth"],
+                m_norm=params["m_norm"],
+                weight_scaler=params["weight_scaler"],
+                train_latent_bias=params["train_latent_bias"],
+                train_neuron_bias=params["train_neuron_bias"]
             )
         else:
+            print("No neuromodulation applied")
             self.transition = Transition(
                 self.d_z,
                 self.d_u,

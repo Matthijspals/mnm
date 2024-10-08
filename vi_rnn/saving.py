@@ -93,10 +93,12 @@ def load_model(name, load_encoder=True):
         task_params = CPU_Unpickler(f).load()
     with open(training_params_file, "rb") as f:
         training_params = CPU_Unpickler(f).load()
-
+    print(vae_params.keys())
     # Backwards compatibility
     if "prior_params" in vae_params:
         vae_params["rnn_params"] = vae_params.pop("prior_params")
+    if "neuromodulators" in vae_params["rnn_params"] and "neuromodulation_type" not in vae_params["rnn_params"]:
+        vae_params["rnn_params"]["neuromodulation_type"] = "rank"
 
     if vae_params["rnn_params"]["readout_rates"] == True:
         vae_params["rnn_params"]["readout_rates"] = "rates"
@@ -115,7 +117,6 @@ def load_model(name, load_encoder=True):
         else:
             print("no out nonlinearity found, setting to identity")
             vae_params["rnn_params"]["out_nonlinearity"] = "identity"            
-
 
     model = VAE(vae_params)
 
