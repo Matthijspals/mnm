@@ -6,9 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
-# figures/
-# models/
-# data/ 
+figures/
+models/
+data/ 
 train_scripts/student_teacher/wandb/
 # Distribution / packaging
 .Python
