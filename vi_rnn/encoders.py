@@ -48,7 +48,6 @@ class Inverse_Observation(nn.Module):
             logvar (torch.tensor; batch_size x dim_z x dim_T x k): log variance of the approximate posterior
             eps_sample (torch.tensor; batch_size x dim_z x dim_T x k): sample from the standard normal distribution
         """
-        print(x.shape)
         mean = (
             self.mean(x, grad=self.params["obs_grad"]).unsqueeze(-1).repeat(1, 1, 1, k)
         )

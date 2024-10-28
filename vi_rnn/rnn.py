@@ -4,10 +4,7 @@ import numpy as np
 from torch.nn.utils.parametrizations import orthogonal
 
 from initialize_parameterize import *
-from vi_rnn.transitions.transitions import Transition
-from vi_rnn.transitions.rank_scaling import RankScalingTransition
-from vi_rnn.transitions.firing_rate_scaling import FiringRateScalingTransition
-from vi_rnn.transitions.additive_input import AdditiveInputTransition
+from vi_rnn.transitions import Transition
 
 class LRRNN(nn.Module):
     """
@@ -15,13 +12,14 @@ class LRRNN(nn.Module):
     Code inspired by https://github.com/DurstewitzLab/dendPLRNN
     """
 
-    def __init__(self, dim_x, dim_z, dim_u, dim_N, params):
+    def __init__(self, dim_x, dim_z, dim_u, dim_N, dim_s, params):
         """
         Args:
             dim_x (int): dimensionality of the data
             dim_z (int): dimensionality of the latent space (rank)
             dim_u (int): dimensionality of the input
             dim_N (int): amount of neurons in the network
+            dim_s (int): dimensionality of neuromodulator signals
             params (dict): dictionary of parameters
         """
 
@@ -30,6 +28,7 @@ class LRRNN(nn.Module):
         self.d_z = dim_z
         self.d_u = dim_u
         self.d_N = dim_N
+        self.d_s = dim_s 
 
         self.params = params
         self.normal = torch.distributions.Normal(0, 1)
@@ -126,70 +125,24 @@ class LRRNN(nn.Module):
             if params["clipped"] and params["activation"] == "relu":
                 params["activation"] = "clipped_relu"
 
-        if params["neuromodulators"] and params["neuromodulation_type"] == "rank":
-            print("Using rank-scaling neuromodulation")
-            self.transition = RankScalingTransition(
-                self.d_z,
-                self.d_u,
-                self.d_N,
-                nonlinearity=params["activation"],
-                exp_par=params["exp_par"],
-                shared_tau=params["shared_tau"],
-                weight_dist=params["weight_dist"],
-                m_orth=params["orth"],
-                m_norm=params["m_norm"],
-                weight_scaler=params["weight_scaler"],
-                train_latent_bias=params["train_latent_bias"],
-                train_neuron_bias=params["train_neuron_bias"]
-            )
-        elif params["neuromodulators"] and params["neuromodulation_type"] == "firing_rate":
-            print("Using firing rate scaling neuromodulation")
-            self.transition = FiringRateScalingTransition(
-                self.d_z,
-                self.d_u,
-                self.d_N,
-                nonlinearity=params["activation"],
-                exp_par=params["exp_par"],
-                shared_tau=params["shared_tau"],
-                weight_dist=params["weight_dist"],
-                m_orth=params["orth"],
-                m_norm=params["m_norm"],
-                weight_scaler=params["weight_scaler"],
-                train_latent_bias=params["train_latent_bias"],
-                train_neuron_bias=params["train_neuron_bias"]
-            )
-        elif params["neuromodulators"] and params["neuromodulation_type"] == "additive":
-            print("Using additive input neuromodulation")
-            self.transition = AdditiveInputTransition(
-                self.d_z,
-                self.d_u,
-                self.d_N,
-                nonlinearity=params["activation"],
-                exp_par=params["exp_par"],
-                shared_tau=params["shared_tau"],
-                weight_dist=params["weight_dist"],
-                m_orth=params["orth"],
-                m_norm=params["m_norm"],
-                weight_scaler=params["weight_scaler"],
-                train_latent_bias=params["train_latent_bias"],
-                train_neuron_bias=params["train_neuron_bias"]
-            )
-        else:
-            print("No neuromodulation applied")
-            self.transition = Transition(
-                self.d_z,
-                self.d_u,
-                self.d_N,
-                nonlinearity=params["activation"],
-                exp_par=params["exp_par"],
-                shared_tau=params["shared_tau"],
-                weight_dist=params["weight_dist"],
-                m_orth=params["orth"],
-                m_norm=params["m_norm"],
-                weight_scaler=params["weight_scaler"],
-                train_latent_bias=params["train_latent_bias"],
-                train_neuron_bias=params["train_neuron_bias"],
-            )
+        self.transition = Transition(
+            self.d_x,
+            self.d_z,
+            self.d_u,
+            self.d_N,
+            self.d_s,
+            nonlinearity=params["activation"],
+            exp_par=params["exp_par"],
+            shared_tau=params["shared_tau"],
+            weight_dist=params["weight_dist"],
+            m_orth=params["orth"],
+            m_norm=params["m_norm"],
+            weight_scaler=params["weight_scaler"],
+            train_latent_bias=params["train_latent_bias"],
+            train_neuron_bias=params["train_neuron_bias"],
+            neuromodulation=None if "neuromodulation" not in params.keys() else params["neuromodulation"],
+            train_nm_params=False if "train_nm_params" not in params.keys() else params["train_nm_params"]
+        )
 
         # initialise the observation ste
         # ---------
@@ -262,6 +215,7 @@ class LRRNN(nn.Module):
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
             noise_scale (float): scale of the noise
             u (torch.tensor; n_trials x dim_u x time_steps x k): input
+            s (torch.tensor; n_trials x dim_s x time_steps): neuromodulation
 
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
@@ -269,11 +223,11 @@ class LRRNN(nn.Module):
         if noise_scale > 0:
             if self.params["scalar_noise_z"] == "Cov":
                 cov_chol = self.chol_cov_embed(self.R_z)
-                z = self.transition(z, s, u=u) + noise_scale * torch.einsum(
+                z = self.transition(z, u=u, s=s) + noise_scale * torch.einsum(
                     "xz, BzTK -> BxTK", cov_chol, self.normal.sample(z.shape)
                 )
             else:
-                z = self.transition(z, s, u=u) + noise_scale * self.normal.sample(
+                z = self.transition(z, u=u, s=s) + noise_scale * self.normal.sample(
                     z.shape
                 ) * self.std_embed_z(self.R_z).unsqueeze(0).unsqueeze(2).unsqueeze(3)
         else:
@@ -291,7 +245,7 @@ class LRRNN(nn.Module):
             noise_scale (float): scale of the noise
             z0 (torch.tensor; n_trials x dim_z x 1): initial latent state
             u (torch.tensor); n_trials x dim_u x time_steps): input
-            s (torch.tensor); n_trials x dim_z x time_steps): neuromodulator states 
+            s (torch.tensor); n_trials x dim_s x time_steps): neuromodulator states 
         Returns:
             Z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
@@ -300,7 +254,7 @@ class LRRNN(nn.Module):
             if z0 is None:
                 z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
             else:
-                if len(z0.squeeze().shape) == 1:  # only z dimension is given
+                if len(z0.squeeze().shape) == 1 and self.d_s != 1:  # only z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(1, self.d_z, 1, 1)
                 elif len(z0.shape) < 4:  # trial and z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(
@@ -329,12 +283,12 @@ class LRRNN(nn.Module):
 
         return Z
 
-    def get_rates(self, z, u=None):
+    def get_rates(self, z, u=None, s=None):
         """transform the latent states to the neuron activity"""
-        R = self.transition.get_rates(z, u=u)
+        R = self.transition.get_rates(z, u=u, s=s)
         return R
 
-    def get_observation(self, z, noise_scale=0):
+    def get_observation(self, z, u=None, noise_scale=0):
         """
         Generate observations from the latent states
         Args:

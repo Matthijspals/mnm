@@ -7,7 +7,7 @@ import os
 
 os.environ["WANDB__SERVICE_WAIT"] = "1000"
 import sys
-from vi_rnn.evaluation import eval_VAE, predict_X, compute_KL_divergence
+from vi_rnn.evaluation import eval_VAE
 from vi_rnn.saving import save_model
 
 file_dir = str(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +26,6 @@ def train_VAE(
     vae,
     training_params,
     task,
-    eval_task=None,
     sync_wandb=False,
     out_dir=None,
     fname=None,
@@ -42,7 +41,6 @@ def train_VAE(
         vae: initialized VAE
         training_params: dictionary of training parameters
         task, Pytorch Dataset
-        eval_task, Pytorch Dataset
         syn_wandb: Bool, indicates synchronsation with WandB
         out_dir: string designating where to store model
         fname: model name
@@ -93,11 +91,6 @@ def train_VAE(
     dataloader.dataset.data = dataloader.dataset.data.to(device=device)
     dataloader.dataset.data_eval = dataloader.dataset.data_eval.to(device=device)
 
-    if eval_task is not None: 
-        eval_dataloader = DataLoader(
-            eval_task, batch_size=training_params["batch_size"], shuffle=True
-        )
-
     # initialize wandb
     if sync_wandb:
         wandb.init(
@@ -117,10 +110,9 @@ def train_VAE(
         / training_params["n_epochs"]
     )
     print("Learning rate decay factor " + str(gamma))
-    # scheduler = scheduler or torch.optim.lr_scheduler.ExponentialLR(
-    #     optimizer, gamma, last_epoch=-1
-    # )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=training_params["step_size"], gamma=training_params["gamma"])
+    scheduler = scheduler or torch.optim.lr_scheduler.ExponentialLR(
+        optimizer, gamma, last_epoch=-1
+    )
 
     # loss function
     losses = []
@@ -128,11 +120,18 @@ def train_VAE(
     # start timer before training
     time0 = time.time()
 
+    #backwards compat
+    if "sim_v" not in training_params.keys():
+        training_params["sim_v"] = False
+    elif training_params["sim_v"]:
+        print("Simulating V")
+
     for i in range(curr_epoch, training_params["n_epochs"]):
         with torch.no_grad():
+            # DO EVALUATION
             if i % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
                 vae.eval()
-                with torch.no_grad(): 
+                with torch.no_grad():
                     klx_bin, psH, mean_rate_error = eval_VAE(
                         vae,
                         task,
@@ -142,7 +141,6 @@ def train_VAE(
                         sim_obs_noise=training_params["sim_obs_noise"],
                         sim_latent_noise=training_params["sim_latent_noise"],
                         smooth_at_eval=training_params["smooth_at_eval"],
-                        neuromodulation=training_params["neuromodulation"]
                     )
                     training_params["KL_x"].append(klx_bin)
                     training_params["PSH"].append(psH)
@@ -151,7 +149,7 @@ def train_VAE(
                     if sync_wandb:
                         wandb.log(
                             {
-                                "KL Div": klx_bin,
+                                "KL_data": klx_bin,
                                 "power_spectr_distance": psH,
                                 "mean_rate_error": mean_rate_error,
                             }
@@ -192,12 +190,8 @@ def train_VAE(
         batch_ll_x = 0
         batch_loss = 0
 
-        for data_sample in dataloader:
-            inputs, stim = data_sample[0], data_sample[1]
-            if training_params["neuromodulation"]:
-                s = data_sample[2]
-            else: s = None 
-            # print(inputs.shape, stim.shape, s.shape)
+        for inputs, stim in dataloader:
+
             optimizer.zero_grad()
             # forward pass
             if training_params["loss_f"] == "opt_VGTF":
@@ -207,7 +201,7 @@ def train_VAE(
                         u=stim,
                         k=training_params["k"],
                         resample=training_params["resample"],
-                        s=s
+                        sim_v=training_params['sim_v']
                     )
                 )
             elif training_params["loss_f"] == "VGTF":
@@ -219,29 +213,37 @@ def train_VAE(
                         resample=training_params["resample"],
                         out_likelihood=training_params["observation_likelihood"],
                         t_forward=training_params["t_forward"],
-                        s=s
+                        sim_v=training_params['sim_v']
                     )
                 )
+            elif training_params["loss_f"] == "bs_VGTF":
+                Loss_it, Z, _, ll_x, ll_z, H, log_likelihood, alphas = (
+                    vae.forward_bootstrap_VGTF(
+                        inputs,
+                        u=stim,
+                        k=training_params["k"],
+                        resample=training_params["resample"],
+                        out_likelihood=training_params["observation_likelihood"],
+                        t_forward=training_params["t_forward"],
+                        sim_v=training_params['sim_v']
+                    )
+                )
+            elif training_params["loss_f"] == "GTF":
+                 Loss_it, Z, _, ll_x, ll_z, H, log_likelihood, alphas = vae.forward_GTF(inputs,u=stim,alpha=training_params['alpha'],
+                        sim_v=training_params['sim_v'])
+                 
             batch_ll += log_likelihood.mean().item()
             batch_ll_x += ll_x.mean().item()
             batch_ll_z += ll_z.mean().item()
             batch_h_loss += H.mean().item()
             loss = -Loss_it.mean()
             batch_loss += loss.item()
-            
-            print('-' * 100)
-            print(f'Batch loss: {batch_loss}')
-            print(f'loss: {loss}')
-            print(f'batch_h_loss: {batch_h_loss}')
-            print(f'batch_ll: {batch_ll}')
-            print(f'batch_ll_x: {batch_ll_x}')
 
             # check for nans
             if torch.isnan(loss):
                 print("UH OH FOUND NAN, stopping training...")
                 stop_training = True
                 break
-
             # backprop
             loss.backward()
 
@@ -305,7 +307,6 @@ def train_VAE(
                     "noise_z": noise_z.mean().item(),
                     "noise_x": noise_x.mean().item(),
                     "noise_e": torch.exp(vae.encoder.logvar / 2).mean().item(),
-                    "lr": scheduler.get_last_lr()[0]
                 }
             )
 
@@ -314,17 +315,17 @@ def train_VAE(
     print("\nDone. Training took %.1f sec." % (time.time() - time0))
 
     # save trained network
-    fname = save_model(vae, training_params, task.task_params, directory=out_dir)
+    fname = save_model(vae, training_params, task.task_params, directory=out_dir,name=fname)
     print("Saved: " + fname)
     # upload trained models to WandB
-    # if sync_wandb:
-    #     # store to wandb
-    #     print(fname + "_state_dict_enc.pkl")
-    #     wandb.save(fname + "_state_dict_enc.pkl")
-    #     wandb.save(fname + "_state_dict_prior.pkl")
-    #     wandb.save(fname + "_vae_params.pkl")
-    #     wandb.save(fname + "_task_params.pkl")
-    #     wandb.save(fname + "_training_params.pkl")
-    #     wandb.finish()
+    if sync_wandb:
+        # store to wandb
+        print(fname + "_state_dict_enc.pkl")
+        wandb.save(fname + "_state_dict_enc.pkl")
+        wandb.save(fname + "_state_dict_prior.pkl")
+        wandb.save(fname + "_vae_params.pkl")
+        wandb.save(fname + "_task_params.pkl")
+        wandb.save(fname + "_training_params.pkl")
+        wandb.finish()
 
     return losses

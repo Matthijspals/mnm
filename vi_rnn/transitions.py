@@ -10,9 +10,11 @@ class Transition(nn.Module):
 
     def __init__(
         self,
+        dx,
         dz,
         du,
         hidden_dim,
+        ds,
         nonlinearity,
         exp_par,
         shared_tau,
@@ -22,6 +24,8 @@ class Transition(nn.Module):
         weight_scaler=1,
         train_latent_bias=True,
         train_neuron_bias=True,
+        neuromodulation=None,
+        train_nm_params=False
     ):
         """
         Args:
@@ -38,8 +42,15 @@ class Transition(nn.Module):
             train_neuron_bias (bool): whether to train the bias of the neurons (x)
         """
         super(Transition, self).__init__()
+        self.dx = dx 
         self.dz = dz
         self.du = du
+        self.ds = ds
+
+        self.neuromodulation = neuromodulation
+        self.nm_params = nn.Parameter(torch.ones(self.dx, self.ds), requires_grad=train_nm_params)
+            
+        print(f'Neuromodulation type: {self.neuromodulation}')
 
         # nonlinearity
         if nonlinearity == "relu":
@@ -114,7 +125,7 @@ class Transition(nn.Module):
             self.m_transform = lambda x: x.weight
         self.scaling = weight_scaler
         print("weight scaler", self.scaling)
-
+        # print(f"m.shape: {self.m_transform(self.m).shape}")
         # Input weights
         if self.du > 0:
             self.Wu = nn.Parameter(
@@ -123,17 +134,18 @@ class Transition(nn.Module):
         else:
             self.Wu = torch.zeros(hidden_dim, 0)
 
-    def forward(self, z, s=None, u=None):
+    def forward(self, z, u=None, s=None):
         """
         One step forward
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
             u (torch.tensor; n_trials x dim_u x time_steps x k): input
+            s (torch.tensor; n_trials x dim_s): neuromodulation signal
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
         A = self.cast_A(self.AW)
-        R = self.get_rates(z, u=u)
+        R = self.get_rates(z, s=s, u=u)
         z = (
             A * z
             + torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
@@ -141,26 +153,38 @@ class Transition(nn.Module):
         )
         return z
 
-    def get_rates(self, z, u=None, nm=None, additive=False):
+    def get_rates(self, z, u=None, s=None):
         """Transform latents to neuron activity
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
             u (torch.tensor; n_trials x dim_u x time_steps x k): input
+            s (torch.tensor; n_trials x dim_s): neuromodulation
         Returns:
             R (torch.tensor; n_trials x dim_N x time_steps x k): neuron activity"""
         if len(z.shape) == 3: z = z.unsqueeze(3) # add particle dimension 
         if u is not None and len(u.shape) == 3: u = u.unsqueeze(3)
         m = self.m_transform(self.m)
+        
         X = torch.einsum("Nz,BzTK->BNTK", m, z)
+    
         if u is not None:
             X += torch.einsum("Nu,BuTK->BNTK", self.Wu, u)
-   
-        # if multiplicative neuromodulation is enabled, apply neuromodulation
-        if nm is not None and additive is False: 
-            X *= nm.view(X.shape[0], 1, 1, 1)
-        elif nm is not None: 
-            X += nm.view(X.shape[0], 1, 1, 1) 
-        
+
+        if s is not None:
+            # transform neuromodulator signal to x space (i.e. from b x d_s -> b x d_x)
+            s_x =  s @ self.nm_params.T
+
+            if self.neuromodulation == 'presynaptic':         
+                X *= s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
+                            
+            elif self.neuromodulation == 'additive':
+                X += s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
+
+            elif self.neuromodulation == 'postsynaptic': 
+                s_x = s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
+                R = s_x * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
+                return R
+
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
         return R
 

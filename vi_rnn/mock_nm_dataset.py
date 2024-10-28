@@ -27,7 +27,12 @@ class MockDataset(Dataset):
         Returns: 
             trial (torch.tensor; dim_x x self.dur): trial of length self.dur 
             input (torch.tensor; n_inp x self.dur): optional input on which the model is conditioned  
+            s (torch.tensor; dim_s x self.dur): Neuromodulation signal 
         """
+        if self.s is None: 
+            return self.data[idx].T, \
+                self.task_input[idx].T
+
         return self.data[idx].T, \
                 self.task_input[idx].T, \
                 self.s[idx].T

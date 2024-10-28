@@ -117,7 +117,8 @@ def load_model(name, load_encoder=True):
         else:
             print("no out nonlinearity found, setting to identity")
             vae_params["rnn_params"]["out_nonlinearity"] = "identity"            
-
+    if "dim_s" not in vae_params: 
+        vae_params["dim_s"] = vae_params["dim_z"]
     model = VAE(vae_params)
 
     # More backwards compatibility

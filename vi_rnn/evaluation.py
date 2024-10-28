@@ -23,7 +23,7 @@ def predict_X(
         sim_obs_noise=1,
         sim_latent_noise=1,
         smooth=False, 
-        neuromodulators=False
+        neuromodulation=False
 ):
     """
     Get predicted trajectories 
@@ -39,7 +39,9 @@ def predict_X(
         freq_cut_off (int): cut off for the power spectrum 
         sim_obs_noise (float): latent noise scale 
         smooth (bool): whether to smooth the generated trajectory 
-        neuromodulators (bool): data contains neuromodulator signals? 
+
+    Returns:
+        trajectories (torch.tensor; n_trials, dim_x, trial_dur)
     """
     n_trials = eval_data.shape[0] if len(eval_data.shape) == 3 else 1
     with torch.no_grad(): 
@@ -77,15 +79,36 @@ def predict_X(
         # transform latent time series into observations 
         trajectories = vae.rnn.get_observation(Z, noise_scale=sim_obs_noise)
         
-        # if smooth: 
-        #     window = signal.windows.hann(15) 
-        #     data_gen = torch.from_numpy(
-        #         zscore(
-        #             ndimage.convolve2d(data_gen.cpu().numpy(), window, axis=0), axis=0
-        #         )
-        #     )
+        if smooth: 
+            window = signal.windows.hann(15) 
+            data_gen = torch.from_numpy(
+                zscore(
+                    ndimage.convolve2d(data_gen.cpu().numpy(), window, axis=0), axis=0
+                )
+            )
 
         return trajectories.reshape(n_trials, -1, trial_dur)
+
+def compute_r_2(signals_true, signals_pred):
+    """
+    Compute the R² (coefficient of determination) for a single neuron across multiple trials.
+    
+    Args: 
+    signals_true (torch.Tensor; n_trials x time_steps): Actual signal
+    signals_pred (torch.Tensor; n_trials x time_steps): Predicted signal 
+
+    Returns:
+        r_2 (float): the mean R² value across trials for the neuron 
+        stdev (float): the stdev across trials for given neuron
+    """
+    mean_signals = signals_true.mean(axis=1)
+    # compute variance of actual data 
+    var = torch.sum((signals_true - mean_signals.unsqueeze(-1)) ** 2, axis=1)
+    # compute residual sum of squares 
+    ss_res = torch.sum((signals_true - signals_pred) ** 2, axis=1)
+    r_2_arr = 1 - (ss_res / var)
+    return r_2_arr.mean().item(), r_2_arr.std().item()
+
 
 def compute_KL_divergence(pred_trajectories, x):
     """
@@ -114,7 +137,7 @@ def eval_VAE(
     sim_obs_noise=1,
     sim_latent_noise=1,
     smooth_at_eval=True,
-    neuromodulators=False
+    neuromodulation=False
 ):
     """
     Evaluate the VAE by looking at distribution over states and time
@@ -135,7 +158,11 @@ def eval_VAE(
         mean_rate_error (float): mean rate error between the true and generated data
 
     """
-    trial_data, _ = task.__getitem__(0)
+    if neuromodulation:
+        trial_data, _, _ = task.__getitem__(0)
+    else:
+        trial_data, _ = task.__getitem__(0)
+        
     trial_dur = trial_data.shape[1]
     with torch.no_grad():
 
@@ -148,8 +175,13 @@ def eval_VAE(
             else:  # take mean prediction of encoder
                 _, z_hat, _, _ = vae.encoder(data[:trial_dur].T.unsqueeze(0))
             z0 = z_hat[:, :, :1].squeeze()
+            u, s = None, None 
+            if task.task_input is not None: 
+                u = torch.permute(task.task_input, 0, 2, 1)
+            if task.s is not None: 
+                s = torch.permute(task.s, 0, 2, 1)
             Z = vae.rnn.get_latent_time_series(
-                time_steps=T, cut_off=cut_off, z0=z0, noise_scale=sim_latent_noise
+                time_steps=T, cut_off=cut_off, z0=z0, u=u, s=s, noise_scale=sim_latent_noise
             )
         # Evaluate on multiple short trajectories (trials)
         else:
@@ -158,16 +190,24 @@ def eval_VAE(
             n_eval_trials = min(n_trials, max_trials)
             data = task.data_eval[
                 :, :n_eval_trials, :
-            ]  # dim_x, n_eval_trials, T_data_trial
+            ]  # n_eval_trials, T_data_trial, dim_x
             if sim_latent_noise > 1e-8:
-                z_hat, _, _, _ = vae.encoder(data.permute(1, 0, 2))
+                z_hat, _, _, _ = vae.encoder(data.permute(0, 2, 1))
             else:
-                _, z_hat, _, _ = vae.encoder(data.permute(1, 0, 2))
+                _, z_hat, _, _ = vae.encoder(data.permute(0, 2, 1))
             z0 = z_hat[:, :, :1]
+            print(f'z0 shape: {z0.shape}')
+            u, s = None, None 
+            if task.task_input is not None: 
+                u = torch.permute(task.task_input, (0, 2, 1))
+            if task.s is not None: 
+                s = torch.permute(task.s, (0, 2, 1))
             Z = vae.rnn.get_latent_time_series(
                 time_steps=T_data_trial,
                 cut_off=cut_off,
                 z0=z0,
+                u=u,
+                s=s,
                 noise_scale=sim_latent_noise,
             )
 
