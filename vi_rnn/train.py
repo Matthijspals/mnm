@@ -158,30 +158,30 @@ def train_VAE(
                         )
 
                         # plot latent time series and reconstructions
-                        with torch.no_grad():
-                            data, u = task.__getitem__(0)
-                            dim_x, _ = data.shape
-                            z_hat, Emean, Esigma, eps_s = vae.encoder(data.unsqueeze(0))
-                            z0 = z_hat[:, :, :1].squeeze()
-                            Z = vae.rnn.get_latent_time_series(
-                                time_steps=1000,
-                                z0=z0,
-                                noise_scale=training_params["sim_latent_noise"],
-                            )
-                            data_gen = (
-                                vae.rnn.get_observation(
-                                    Z, noise_scale=training_params["sim_obs_noise"]
-                                )
-                                .permute(0, 2, 1, 3)
-                                .reshape(1000, dim_x)
-                            )
-                        plt.figure()
-                        plt.plot(Z[0, :, :, 0].detach().cpu().T)
-                        plt.xlim(0)
-                        wandb.log({"latent" + str(i): plt})
-                        plt.figure()
-                        plt.plot(data_gen.detach().cpu())
-                        wandb.log({"reconstruction" + str(i): plt})
+                        # with torch.no_grad():
+                        #     data, u = task.__getitem__(0)
+                        #     dim_x, _ = data.shape
+                        #     z_hat, Emean, Esigma, eps_s = vae.encoder(data.unsqueeze(0))
+                        #     z0 = z_hat[:, :, :1].squeeze()
+                        #     Z = vae.rnn.get_latent_time_series(
+                        #         time_steps=1000,
+                        #         z0=z0,
+                        #         noise_scale=training_params["sim_latent_noise"],
+                        #     )
+                        #     data_gen = (
+                        #         vae.rnn.get_observation(
+                        #             Z, noise_scale=training_params["sim_obs_noise"]
+                        #         )
+                        #         .permute(0, 2, 1, 3)
+                        #         .reshape(1000, dim_x)
+                        #     )
+                        # plt.figure()
+                        # plt.plot(Z[0, :, :, 0].detach().cpu().T)
+                        # plt.xlim(0)
+                        # wandb.log({"latent" + str(i): plt})
+                        # plt.figure()
+                        # plt.plot(data_gen.detach().cpu())
+                        # wandb.log({"reconstruction" + str(i): plt})
 
         # set rnn to training mode
         vae.train()
@@ -207,7 +207,8 @@ def train_VAE(
                         u=stim,
                         k=training_params["k"],
                         resample=training_params["resample"],
-                        s=s
+                        s=s,
+                        sim_v=training_params["sim_v"]
                     )
                 )
             elif training_params["loss_f"] == "VGTF":
@@ -229,13 +230,13 @@ def train_VAE(
             loss = -Loss_it.mean()
             batch_loss += loss.item()
             
-            print('-' * 100)
-            print(f'Batch loss: {batch_loss}')
-            print(f'loss: {loss}')
-            print(f'batch_h_loss: {batch_h_loss}')
-            print(f'batch_ll: {batch_ll}')
-            print(f'batch_ll_x: {batch_ll_x}')
-
+            # print('-' * 100)
+            # print(f'Batch loss: {batch_loss}')
+            # print(f'loss: {loss}')
+            # print(f'batch_h_loss: {batch_h_loss}')
+            # print(f'batch_ll: {batch_ll}')
+            # print(f'batch_ll_x: {batch_ll_x}')
+            # print(f'Training time: {time.time() - time0}')
             # check for nans
             if torch.isnan(loss):
                 print("UH OH FOUND NAN, stopping training...")

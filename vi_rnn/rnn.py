@@ -209,7 +209,7 @@ class LRRNN(nn.Module):
                 torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
             )
 
-    def forward(self, z, s=None, noise_scale=0, u=None):
+    def forward(self, z, s=None, noise_scale=0, u=None, v=None, sim_v=False):
         """forward step of the RNN, predict z one step ahead
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
@@ -220,22 +220,27 @@ class LRRNN(nn.Module):
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
+        if u is not None and sim_v==False:
+            v = u
+        if u is not None:
+            v = self.transition.step_input(v, u)
+
         if noise_scale > 0:
             if self.params["scalar_noise_z"] == "Cov":
                 cov_chol = self.chol_cov_embed(self.R_z)
-                z = self.transition(z, u=u, s=s) + noise_scale * torch.einsum(
+                z = self.transition(z, v=v, s=s) + noise_scale * torch.einsum(
                     "xz, BzTK -> BxTK", cov_chol, self.normal.sample(z.shape)
                 )
             else:
-                z = self.transition(z, u=u, s=s) + noise_scale * self.normal.sample(
+                z = self.transition(z, v=v, s=s) + noise_scale * self.normal.sample(
                     z.shape
                 ) * self.std_embed_z(self.R_z).unsqueeze(0).unsqueeze(2).unsqueeze(3)
         else:
-            z = self.transition(z, u=u, s=s)
-        return z
+            z = self.transition(z, v=v, s=s)
+        return z, v
 
     def get_latent_time_series(
-        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None
+        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None, sim_v=True
     ):
         """
         Generate a latent time series of length time_steps
@@ -251,6 +256,7 @@ class LRRNN(nn.Module):
         """
         with torch.no_grad():
             Z = []
+            V = []
             if z0 is None:
                 z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
             else:
@@ -262,25 +268,40 @@ class LRRNN(nn.Module):
                     )
                 else:
                     z = z0.to(device=self.R_x.device)
-            if u is not None and len(u.shape) < 4:
-                u = u.unsqueeze(-1)  # add particle dim
-            # if s is not None and len(s.shape) < 4: 
-            #     s = s.unsqueeze(-1) # add particle dim
+            #run model with input
+            if u is not None:
+                if len(u.shape) < 4:
+                    u = u.unsqueeze(-1)  # add particle dim
+                v = torch.zeros(u.shape[0], self.d_u, 1, 1,device=self.R_x.device)
+                for t in range(time_steps + cut_off):
+    
+                    z,v = self.forward(
+                            z, 
+                            noise_scale=noise_scale, 
+                            u=u[:, :, t].unsqueeze(2),
+                            v=v,
+                            s=None if s is None else s[:, :, t],
+                            sim_v=sim_v
+                        )
+                    Z.append(z[:, :, 0])
+                    V.append(v[:, :, 0])
+                V = torch.stack(V)
+                V = V[cut_off:]
+                V = V.permute(1, 2, 0, 3)
+            
+            else:
+                print("no input")
+                for t in range(time_steps + cut_off):
+                    z,_ = self.forward(z, noise_scale=noise_scale)
+                    Z.append(z[:, :, 0])
 
-            for t in range(time_steps + cut_off):
-                z = self.forward(
-                    z, 
-                    noise_scale=noise_scale, 
-                    u=None if u is None else u[:, :, t].unsqueeze(2),
-                    s=None if s is None else s[:, :, t]
-                    # s=None if s is None else s[:, :, t].unsqueeze(2)
-                )
-                Z.append(z[:, :, 0])
-
+            # cut off the transients
             Z = torch.stack(Z)
             Z = Z[cut_off:]
             Z = Z.permute(1, 2, 0, 3)
 
+        if sim_v:
+            return Z, V
         return Z
 
     def get_rates(self, z, u=None, s=None):
@@ -288,7 +309,7 @@ class LRRNN(nn.Module):
         R = self.transition.get_rates(z, u=u, s=s)
         return R
 
-    def get_observation(self, z, u=None, noise_scale=0):
+    def get_observation(self, z, v=None, noise_scale=0):
         """
         Generate observations from the latent states
         Args:
@@ -298,10 +319,16 @@ class LRRNN(nn.Module):
             X (torch.tensor; n_trials x dim_x x time_steps x k): observations
         """
         if self.readout_rates == "rates":
-            R = self.get_rates(z)
+            R = self.get_rates(z, u=v)
         elif self.readout_rates == "currents":
             m = self.transition.m_transform(self.transition.m)
-            R = torch.einsum("Nz,BzTK->BNTK", m, z)
+            if v is not None:
+                Wu = self.transition.Wu
+                R = torch.einsum("Nz,BzTK->BNTK", m, z)+torch.einsum("Nz,BzTK->BNTK", Wu, v)
+            else:
+                R = torch.einsum("Nz,BzTK->BNTK", m, z)
+        elif self.readout_rates == "z_and_v":
+            R = torch.concat((z,v.repeat(1,1,1,z.shape[-1])),dim=1)
         else:
             R = z
         X = self.observation(R)
@@ -320,27 +347,29 @@ class LRRNN(nn.Module):
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps): latent time series
         """
+
         if self.readout_rates == "currents":
+            m = self.transition.m_transform(self.transition.m)
+            Wu = self.transition.Wu
+            mW = torch.cat((m, Wu), dim=1)
             B_inv = torch.linalg.pinv(
                 (
-                    self.observation.cast_B(self.observation.B)
-                    @ self.transition.m_transform(self.transition.m)
+                    self.observation.cast_B(self.observation.B).T
+                    @ mW
                 ).T
-            )
-
+            )[:,:self.d_z] 
         else:
             B_inv = torch.linalg.pinv(self.observation.cast_B(self.observation.B))
 
         if grad:
-            res = torch.einsum(
+            return torch.einsum(
                 "xz,bxT->bzT", (B_inv, X - self.observation.Bias.squeeze(-1))
             )
         else:
-            res = torch.einsum(
+            return torch.einsum(
                 "xz,bxT->bzT",
-                (B_inv.detach(), X - self.observation.Bias.squeeze(-1).detach()),
+                (B_inv.detach(), X - self.observation.Bias.squeeze(-1).detach())
             )
-        return res 
 
 class Observation(nn.Module):
     """
@@ -365,7 +394,8 @@ class Observation(nn.Module):
         if identity_readout:
             # B = torch.zeros(self.dx, self.dx)
             # B[range(self.dx), range(self.dx)] = 1
-            B = torch.eye(self.dx)
+            B = torch.zeros(self.dz, self.dx)
+            B[range(self.dx), range(self.dx)] = 1
             self.B = nn.Parameter(B, requires_grad=train_weights)
             self.mask = B
             self.cast_B = lambda x: x * self.mask

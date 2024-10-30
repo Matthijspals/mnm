@@ -81,7 +81,7 @@ class VAE(nn.Module):
         self.causal = vae_params["causal"]
         self.MSE_loss = nn.MSELoss()
 
-    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None):
+    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=False):
         """
         Forward pass of the VAE
         Note, here the approximate posterior is the optimal linear combination of the encoder and the RNN
@@ -91,6 +91,7 @@ class VAE(nn.Module):
             u (torch.tensor; n_trials x dim_U x time_steps): input stim
             k (int): number of particles
             resample (str): resampling method
+            sim_v (bool): simulate the input dynamics
         Returns:
             Loss (torch.tensor; n_trials): loss
             Qzs (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the approximate posterior
@@ -123,24 +124,28 @@ class VAE(nn.Module):
         batch_size, dim_x, time_steps = x.shape
 
         # Get the initial prior mean
-        prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
+        if sim_v:
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
+        
+        else: #initialise in the affine subspace corresponding to the input
+            prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
+            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
 
         x = x.unsqueeze(-1)  # add particle dimension
 
         # Get the observation weights and bias
         if self.rnn.params["readout_rates"] == "currents":
+            m = self.rnn.transition.m_transform(self.rnn.transition.m)
             B = self.rnn.observation.cast_B(
                 self.rnn.observation.B
-            ) @ self.rnn.transition.m_transform(self.rnn.transition.m)
+            ).T @ m
             B = B.T
         else:
             B = self.rnn.observation.cast_B(self.rnn.observation.B)
         Obs_bias = self.rnn.observation.Bias.squeeze(-1)
 
         # Calcaulate the Kalman gain and interpolation alpha
-        mat_test = eff_var_x_diag + B.T @ eff_var_prior_t0 @ B
-        # print(mat_test.shape)
-        # print(torch.diag(mat_test))
         Kalman_gain = (
             eff_var_prior_t0
             @ B
@@ -218,14 +223,16 @@ class VAE(nn.Module):
                 print("use, one of: multinomial, systematic, none")
 
             # Get the prior mean
-            if s is not None:     
-                prior_mean = self.rnn(
-                    Qz.unsqueeze(2), s=s[:, :, t], u=u[:, :, t].unsqueeze(2), noise_scale=0
-                ).squeeze(2)
-            else: 
-                prior_mean = self.rnn(
-                    Qz.unsqueeze(2), s=None, u=u[:, :, t].unsqueeze(2), noise_scale=0
-                ).squeeze(2)
+            if s is not None:
+                prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s[:, :, t], v=v).squeeze(2)
+            else:
+                prior_mean = self.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
+
+            #progress input dynamics
+            if sim_v:
+                v = self.rnn.transition.step_input(v,u[:, :, t-1].unsqueeze(2))   
+            else:
+                v = u[:, :, t].unsqueeze(2)
 
             # Calculate the Kalman gain and interpolation alpha
             Kalman_gain = (
@@ -237,9 +244,15 @@ class VAE(nn.Module):
             one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
 
             # Calculate the posterior mean and Joseph stabilised covariance
+            if sim_v == True:
+                v_to_X = torch.einsum("xv, bvk -> bxk", self.rnn.transition.Wu, v.squeeze(-2))
+                x_t = x[:, :, t] - Obs_bias - v_to_X
+            else:
+                x_t = x[:, :, t] - Obs_bias
+                
             mean_Q = torch.einsum(
                 "zs,BsK->BzK", one_min_alpha, prior_mean
-            ) + torch.einsum("zx,BxK->BzK", Kalman_gain, x[:, :, t] - Obs_bias)
+            ) + torch.einsum("zx,BxK->BzK", Kalman_gain, x_t)
             var_Q = (
                 one_min_alpha @ eff_var_prior @ one_min_alpha.T
                 + Kalman_gain @ eff_var_x_diag @ Kalman_gain.T
@@ -266,6 +279,9 @@ class VAE(nn.Module):
             # Get observation mean and calculate likelihood of the data
             Qz = Qz.permute(0, 2, 1)
             mean_x = torch.einsum("zx, bzk -> bxk", B, Qz) + Obs_bias
+            if sim_v == True:
+                mean_x += v_to_X
+                
             x_dist = torch.distributions.Normal(
                 loc=mean_x.permute(0, 2, 1), scale=eff_std_x
             )

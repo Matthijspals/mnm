@@ -23,7 +23,8 @@ def predict_X(
         sim_obs_noise=1,
         sim_latent_noise=1,
         smooth=False, 
-        neuromodulation=False
+        neuromodulation=False,
+        sim_v=True
 ):
     """
     Get predicted trajectories 
@@ -53,9 +54,9 @@ def predict_X(
             else: # take mean prediction of encoder 
                 _, z_hat, _, _ = vae.encoder(eval_data[:trial_dur])
             z0 = z_hat[:, :, 1].squeeze() 
-            # print(f'z0 shape: {z0.shape}')
+            print(f'z0 shape: {z0.shape}')
             # predict latent time series now that we have initial latent state 
-            Z = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
+            Z, _ = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
                                                cut_off=cut_off,
                                                z0=z0,
                                                u=task_input,
@@ -185,18 +186,15 @@ def eval_VAE(
             )
         # Evaluate on multiple short trajectories (trials)
         else:
-            dim_x, max_trials, T_data_trial = task.data_eval.shape
+            max_trials, T_data_trial, dim_x = task.data_eval.shape
             n_trials = int(10000 / T_data_trial)
             n_eval_trials = min(n_trials, max_trials)
-            data = task.data_eval[
-                :, :n_eval_trials, :
-            ]  # n_eval_trials, T_data_trial, dim_x
+            data = task.data_eval
             if sim_latent_noise > 1e-8:
                 z_hat, _, _, _ = vae.encoder(data.permute(0, 2, 1))
             else:
                 _, z_hat, _, _ = vae.encoder(data.permute(0, 2, 1))
             z0 = z_hat[:, :, :1]
-            print(f'z0 shape: {z0.shape}')
             u, s = None, None 
             if task.task_input is not None: 
                 u = torch.permute(task.task_input, (0, 2, 1))
@@ -213,6 +211,7 @@ def eval_VAE(
 
             data = data.reshape(dim_x, -1).T  # n_eval_trials*T_data_trial, dim_x
             T, dim_x = data.shape
+
 
         data_gen = (
             vae.rnn.get_observation(Z, noise_scale=sim_obs_noise)

@@ -51,8 +51,8 @@ class Transition(nn.Module):
         # TODO: Do Glorot initialization
         if self.neuromodulation == "additive":
             self.nm_params = nn.Parameter(torch.ones(self.dx, self.ds), requires_grad=train_nm_params)
-        elif self.neuromodulation == "postsynaptic": 
-            self.nm_params = nn.Parameter(torch.ones(self.dz, self.ds), requires_grad=train_nm_params)
+        # elif self.neuromodulation == "postsynaptic": 
+        #     self.nm_params = nn.Parameter(torch.ones(self.dz, self.ds), requires_grad=train_nm_params)
 
         print(f'Neuromodulation type: {self.neuromodulation}')
 
@@ -138,7 +138,7 @@ class Transition(nn.Module):
         else:
             self.Wu = torch.zeros(hidden_dim, 0)
 
-    def forward(self, z, u=None, s=None):
+    def forward(self, z, v=None, s=None):
         """
         One step forward
         Args:
@@ -149,21 +149,31 @@ class Transition(nn.Module):
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
         A = self.cast_A(self.AW)
-        R = self.get_rates(z, s=s, u=u)
+        R = self.get_rates(z, s=s, v=v)
 
-        z = (
-            A * z
-            + torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
-            + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-        )
+       
 
         if self.neuromodulation == 'postsynaptic':
-            s_z = torch.diag(s @ self.nm_params.T)
-            z = z * s_z.view(s_z.shape[0], s_z.shape[1], 1, 1) 
-        
-        return z
+            z = (
+                A * z
+                +  s.view(s.shape[0], s.shape[1], 1, 1) * torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
+                + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+            )
 
-    def get_rates(self, z, u=None, s=None):
+        else: 
+             z = (
+            A * z
+            + torch.einsum("zN,BNTK->BzTK", self.n * self.scaling , R)
+            + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+        )
+        return z
+    
+    def step_input(self, v, u):
+        A = self.cast_A(self.AW)
+        v= A*v +(1-A)*u
+        return v
+
+    def get_rates(self, z, v=None, s=None):
         """Transform latents to neuron activity
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
@@ -172,15 +182,15 @@ class Transition(nn.Module):
         Returns:
             R (torch.tensor; n_trials x dim_N x time_steps x k): neuron activity"""
         if len(z.shape) == 3: z = z.unsqueeze(3) # add particle dimension 
-        if u is not None and len(u.shape) == 3: u = u.unsqueeze(3)
+        if v is not None and len(v.shape) == 3: v = v.unsqueeze(3)
         m = self.m_transform(self.m)
         
         X = torch.einsum("Nz,BzTK->BNTK", m, z)
     
-        if u is not None:
-            X += torch.einsum("Nu,BuTK->BNTK", self.Wu, u)
+        if v is not None:
+            X += torch.einsum("Nu,BuTK->BNTK", self.Wu, v)
 
-        if s is not None:
+        if s is not None and self.neuromodulation == "additive":
             # transform neuromodulator signal to x space (i.e. from b x d_s -> b x d_x)
             s_x =  s @ self.nm_params.T
 
