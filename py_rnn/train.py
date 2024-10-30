@@ -121,8 +121,14 @@ def train_rnn(
             x = x.to(device=device)
             y = y.to(device=device)
             m = m.to(device=device)
+            s = None 
+            # divide x into input and "neuromodulation" context if desired 
+            if "neuromodulation" in training_params.keys() and \
+                training_params["neuromodulation"] is not None: 
+                s = x[:, :, 2:]
+                x = x[:, :, :2]
 
-            rates, y_pred = rnn(x, x0)
+            rates, y_pred = rnn(x, x0, s=s)
             optimizer.zero_grad()
             task_loss = loss_fn(y_pred, y, m)
             reg_loss = torch.stack(

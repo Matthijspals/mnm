@@ -40,7 +40,7 @@ class RNN(nn.Module):
                     torch.zeros(1, params["n_rec"], dtype=torch.float32)
                 )
 
-    def forward(self, input, x0=None):
+    def forward(self, input, x0=None, s=None):
         """
         Do a forward pass through all time steps
 
@@ -89,7 +89,11 @@ class RNN(nn.Module):
 
         # run through all timesteps
         for i, input_t in enumerate(input.split(1, dim=1)):
-            h_t, output = self.rnn(input_t.squeeze(dim=1), h_t, noise[:, i])
+            if s is None:
+                h_t, output = self.rnn(input_t.squeeze(dim=1), h_t, noise[:, i])
+            else:
+                h_t, output = self.rnn(input_t.squeeze(dim=1), h_t, noise[:, i], s[:, i, :])
+                
             rates[:, i] = h_t
             outputs[:, i] = output
 
@@ -213,7 +217,6 @@ class RNNCell(nn.Module):
             output: linear readout at next time step, tensor of size [batch_size, n_out]
 
         """
-
         # apply mask to weight matrix
         w_eff = self.dale_mask(self.w_rec)
         w_eff = self.conn_mask(w_eff)
@@ -252,6 +255,10 @@ class LR_RNNCell(nn.Module):
 
         # declare network parameters
         self.w_inp = nn.Parameter(torch.Tensor(params["n_inp"], params["n_rec"]))
+        # are we doing neuromodulation? 
+        self.neuromodulation = None 
+        if "neuromodulation" in params.keys() and params["neuromodulation"] is not None: 
+            self.neuromodulation = params["neuromodulation"]
         if not params["train_w_inp"]:
             self.w_inp.requires_grad = False
         self.w_inp_scale = nn.Parameter(torch.Tensor(1))
@@ -316,7 +323,7 @@ class LR_RNNCell(nn.Module):
             self.w_inp_scale = self.w_inp_scale.fill_(params["scale_w_inp"])
             self.w_out_scale = self.w_out_scale.fill_(params["scale_w_out"])
 
-    def forward(self, input, x, noise=0):
+    def forward(self, input, x, noise=0, s=None):
         """
         Do a forward pass through one timestep
 
@@ -332,11 +339,16 @@ class LR_RNNCell(nn.Module):
         """
 
         alpha = self.dt / self.tau
-
         # input to units
-        rec_input = torch.matmul(
-            torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
-        ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+        if s is not None and self.neuromodulation == "postsynaptic":
+            rec_input = torch.matmul(
+                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()) * s, self.m.t()
+            ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+        else:
+            rec_input = torch.matmul(
+                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
+            ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+
         # update hidden state
         x = (1 - alpha) * x + alpha * rec_input + np.sqrt(2 * alpha) * noise
 

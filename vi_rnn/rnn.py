@@ -254,7 +254,7 @@ class LRRNN(nn.Module):
             if z0 is None:
                 z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
             else:
-                if len(z0.squeeze().shape) == 1 and self.d_s != 1:  # only z dimension is given
+                if len(z0.squeeze().shape) == 1 and (self.d_s is None or self.d_s != 1):  # only z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(1, self.d_z, 1, 1)
                 elif len(z0.shape) < 4:  # trial and z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(

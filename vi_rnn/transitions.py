@@ -48,8 +48,12 @@ class Transition(nn.Module):
         self.ds = ds
 
         self.neuromodulation = neuromodulation
-        self.nm_params = nn.Parameter(torch.ones(self.dx, self.ds), requires_grad=train_nm_params)
-            
+        # TODO: Do Glorot initialization
+        if self.neuromodulation == "additive":
+            self.nm_params = nn.Parameter(torch.ones(self.dx, self.ds), requires_grad=train_nm_params)
+        elif self.neuromodulation == "postsynaptic": 
+            self.nm_params = nn.Parameter(torch.ones(self.dz, self.ds), requires_grad=train_nm_params)
+
         print(f'Neuromodulation type: {self.neuromodulation}')
 
         # nonlinearity
@@ -146,11 +150,17 @@ class Transition(nn.Module):
         """
         A = self.cast_A(self.AW)
         R = self.get_rates(z, s=s, u=u)
+
         z = (
             A * z
             + torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
             + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
         )
+
+        if self.neuromodulation == 'postsynaptic':
+            s_z = torch.diag(s @ self.nm_params.T)
+            z = z * s_z.view(s_z.shape[0], s_z.shape[1], 1, 1) 
+        
         return z
 
     def get_rates(self, z, u=None, s=None):
@@ -174,16 +184,11 @@ class Transition(nn.Module):
             # transform neuromodulator signal to x space (i.e. from b x d_s -> b x d_x)
             s_x =  s @ self.nm_params.T
 
-            if self.neuromodulation == 'presynaptic':         
-                X *= s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
+            # if self.neuromodulation == 'presynaptic':         
+            #     X *= s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
                             
-            elif self.neuromodulation == 'additive':
+            if self.neuromodulation == 'additive':
                 X += s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
-
-            elif self.neuromodulation == 'postsynaptic': 
-                s_x = s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
-                R = s_x * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
-                return R
 
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
         return R
