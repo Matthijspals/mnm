@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import h5py
 from pathlib import Path
-
+from mante import generate_mante_data
 
 class Basic_dataset(Dataset):
     def __init__(self, task_params, data, data_eval=None):
@@ -497,3 +497,158 @@ def load_nlb_dataset(
             else eval_inputs
         ),
     )
+
+class Mante(Dataset): 
+
+    def __init__(self, task_params={}): 
+        """
+        Initialize a random dot motion / perceptual decision making
+         / evidence integration task (for teacher network)
+        Args:
+            task_params: dictionary containing task parameters
+
+        Based on https://github.com/adrian-valente/populations_paper_code/blob/master/low_rank_rnns/rdm.py
+        Dubreuil A., Valente A., Beiran M., Mastrogiuseppe F., Ostojic S. 
+        The role of population structure in computations through neural dynamics
+        Nature Neuroscience volume 25, pages 783–794 (2022)
+        """
+
+        self.task_params = {"name": "mante"}
+        
+        if "coherences" not in task_params or task_params["coherences"] is None:
+            self.coherences = [-4, -2, -1, 1, 2, 4]
+        else:
+            self.coherences = task_params["coherences"]
+
+
+    def __len__(self):
+        return len(self.coherences)
+
+    def __getitem__(self, idx):
+        """
+        Returns a trial
+
+        Args:
+            idx, trial index
+
+        Returns:
+            input, Tensor of size [seq_len, n_inp]
+            target, Tensor of size [seq_len, n_inp]
+            mask, Tensor of size [seq_len, n_inp]
+        """
+
+        inputs, targets, mask = generate_mante_data(1, coherences=self.coherences, fraction_validation_trials=0)
+        return inputs[0], targets[0], mask[0]
+    
+
+class Mante_Teacher(Dataset):
+    def __init__(self, task_params, task_params_teacher, U, V, B, I, A, decay=0.9):
+        """
+        Initialize Teacher data for Mante-Sussillo CDM task
+        Args:
+            task_params: dictionary containing task parameters
+            task_params_teacher: dictionary containing teacher task parameters
+            U: torch.tensor; N x R, input to hidden weights
+            V: torch.tensor; R x N, hidden to hidden weights
+            B: torch.tensor; N, biases
+            I: torch.tensor; n_inp x N, input to hidden weights
+            decay: float, decay rate
+            perturb: boolean: Whether to generate a dataset in which neuromodulator signals are random perturbations
+        """
+
+        self.R_z = task_params["R_z"]
+        self.R_x = task_params["R_x"]
+
+        # obtain teacher RNNs stimuli
+        reaching = Mante(task_params_teacher)
+        Reaching_loader = DataLoader(
+            reaching, batch_size=reaching.__len__(), shuffle=False
+        )
+        n_repeats = task_params["n_trials"] //reaching.__len__()
+
+        ss =[]
+        for _ in range(n_repeats+1):
+            s, _, _ = next(iter(Reaching_loader))  # x = trial,time,stims
+            ss.append(s)
+        self.stim = torch.concatenate(ss)[:task_params["n_trials"]]
+        self.s = self.stim[:, :, 2:]
+        self.sin_coeff = None
+
+        self.stim = self.stim[:, :, :2]
+        self.dur = self.stim.shape[1]
+        self.n_trials=self.stim.shape[0]
+        self.N = U.shape[0]
+        self.non_lin = torch.nn.ReLU()
+
+        # generate teacher data
+        if "r0" in task_params:
+            r0 = task_params["r0"]
+        else:
+            r0 = torch.randn(self.n_trials) * 0.1
+        self.latents = torch.zeros(task_params["dz"], self.n_trials, self.dur, dtype=torch.float32)
+        self.data = torch.zeros(self.N, self.n_trials, self.dur, dtype=torch.float32)
+        self.latents[0, :, 0] = r0 
+        self.latents[0, :, 0] += torch.randn(self.n_trials) * self.R_z
+        v = torch.zeros(self.n_trials, self.dur, task_params["du"], dtype=torch.float32)
+        for t in range(1, self.dur):
+            v[:,t] = decay * v[:, t - 1] + (1-decay)*(self.stim[:, t - 1])
+            self.latents[:, :, t] = decay * self.latents[:, :, t - 1]
+            X = U @ self.latents[:, :, t - 1] + B.unsqueeze(1) + (v[:, t - 1] @ I).T
+            s_trans = None 
+            if task_params["neuromodulation"] is not None: 
+                s_trans = A @ self.s[:, t, :].T
+           
+            if task_params["neuromodulation"] == "rank":
+                self.latents[:, :, t] += (
+                    torch.mul(s_trans, V @ self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
+                )
+            elif task_params["neuromodulation"] == "presynaptic": 
+                self.latents[:, :, t] += (
+                    V @ self.non_lin(s_trans * X) + torch.randn(self.n_trials) * self.R_z
+                )
+            elif task_params["neuromodulation"] == "postsynaptic": 
+                self.latents[:, :, t] += (
+                    V @ torch.mul(s_trans, self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
+                )
+            elif task_params["neuromodulation"] == "additive": 
+                self.latents[:, :, t] += (
+                    V @ self.non_lin(X + s_trans) + torch.randn(self.n_trials) * self.R_z
+                )
+            else: 
+                self.latents[:, :, t] += (
+                    V @ self.non_lin(X) + torch.randn(self.n_trials) * self.R_z
+                )
+        if task_params["out"] == "rates":
+            for t in range(self.dur):
+                self.data[:, :, t] = self.non_lin(
+                    U @ self.latents[:, :, t] + B.unsqueeze(1) + (v[:, t] @ I).T
+                )
+        elif task_params["out"] == "currents":
+            for t in range(self.dur):
+                # TODO: Add code for postsynaptic neuromodulation
+                self.data[:, :, t] = U @ self.latents[:, :, t] + (v[:, t] @ I).T
+        self.data += torch.randn(self.N, self.n_trials, self.dur) * self.R_x
+        self.task_params = task_params
+        self.v=v
+
+        self.data = self.data.permute(1, 2, 0)
+        self.data_eval = self.data
+
+    def __len__(self):
+        """Return number of trials in an epoch"""
+        return self.n_trials
+
+    def __getitem__(self, idx):
+        """
+        Return a trial of length self.dur
+        Args:
+            idx (int): trial index
+        Returns:
+            trial (torch.tensor; dim_x x self.dur): trial of length self.dur
+            stim (torch.tensor; n_inp x self.dur): stimulus
+            s (torch.tensor; dim_s x self.dur): neuromodulation signal 
+        """
+        return self.data[idx].T, \
+            self.stim[idx].T.to(device=self.data.device), \
+            self.s[idx].T.to(device=self.data.device)
+    

@@ -26,6 +26,7 @@ class RNN(nn.Module):
         if params["rank"]:
             self.rnn = LR_RNNCell(params)
         else:
+            print('Full Rank')
             self.rnn = RNNCell(params)  # , bias = False)
 
         # hidden state at t = 0
@@ -139,6 +140,17 @@ class RNNCell(nn.Module):
         self.dt = params["dt"]
         self.tau = params["tau_lims"]
 
+        self.neuromodulation = None 
+        if "neuromodulation" in params.keys() and params["neuromodulation"] is not None: 
+            print("Model neuromodulation additive")
+            self.neuromodulation = params["neuromodulation"]
+        
+        if self.neuromodulation is not None:
+            if self.neuromodulation in ["postsynaptic", "presynaptic", "additive"]:
+                self.A = nn.Parameter(torch.ones(params["n_rec"], params["ds"]), requires_grad=True)
+            elif self.neuromodulation == "rank": 
+                self.A = nn.Parameter(torch.ones(params["rank"], params["ds"]), requires_grad=True)
+
         if len(params["tau_lims"]) > 1:
             self.taus_gaus = nn.Parameter(torch.Tensor(params["n_rec"]))
             if not params["train_taus"]:
@@ -203,7 +215,7 @@ class RNNCell(nn.Module):
             self.w_out_scale = self.w_out_scale.fill_(params["scale_w_out"])
             self.b_rec = self.b_rec.copy_(torch.zeros(params["n_rec"]))
 
-    def forward(self, input, x, noise=0):
+    def forward(self, input, x, noise=0, s=None):
         """
         Do a forward pass through one timestep
 
@@ -227,9 +239,23 @@ class RNNCell(nn.Module):
         noise_t = torch.sqrt(2 * alpha) * noise
 
         # calculate input to units
-        rec_input = torch.matmul(self.nonlinearity(x), w_eff.t()) + input.matmul(
-            self.w_inp * self.w_inp_scale
-        )
+        if self.neuromodulation is not None: 
+            s_trans = (self.A @ s.T).T 
+        if self.neuromodulation == 'postsynaptic':
+            rec_input = torch.matmul(s_trans * self.nonlinearity(x), w_eff.t()) + input.matmul(
+                self.w_inp * self.w_inp_scale
+            )
+        elif self.neuromodulation == 'presynaptic': 
+            rec_input = torch.matmul(self.nonlinearity(s_trans * x), w_eff.t()) + input.matmul(
+                self.w_inp * self.w_inp_scale
+            )
+        elif self.neuromodulation == 'additive': 
+            rec_input = torch.matmul(self.nonlinearity(x), w_eff.t()) + input.matmul(
+                self.w_inp * self.w_inp_scale) + s_trans 
+        else:
+            rec_input = torch.matmul(self.nonlinearity(x), w_eff.t()) + input.matmul(
+                self.w_inp * self.w_inp_scale
+            )
         # update hidden state
         x = (1 - alpha) * x + alpha * rec_input + noise_t
 
@@ -288,6 +314,12 @@ class LR_RNNCell(nn.Module):
             print("WARNING: distribution of Tau currently not supported for LR RNN")
         self.N = params["n_rec"]
 
+        if self.neuromodulation is not None:
+            if self.neuromodulation in ["postsynaptic", "presynaptic", "additive"]:
+                self.A = nn.Parameter(torch.ones(params["n_rec"], params["ds"]), requires_grad=True)
+            elif self.neuromodulation == "rank": 
+                self.A = nn.Parameter(torch.ones(params["rank"], params["ds"]), requires_grad=True)
+
         # initialize network parameters
         with torch.no_grad():
 
@@ -339,11 +371,30 @@ class LR_RNNCell(nn.Module):
         """
 
         alpha = self.dt / self.tau
+        if s is not None: 
+            s_trans = (self.A @ s.T).T
+
         # input to units
-        if s is not None and self.neuromodulation == "postsynaptic":
+        if s is not None and self.neuromodulation == "rank":
             rec_input = torch.matmul(
-                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()) * s, self.m.t()
+                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()) * s_trans, self.m.t()
             ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+       
+        elif s is not None and self.neuromodulation == "postsynaptic":      
+            rec_input = torch.matmul(
+                torch.matmul(s_trans * self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
+            ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+
+        elif s is not None and self.neuromodulation == "presynaptic":
+            rec_input = torch.matmul(
+                torch.matmul(self.nonlinearity(s_trans * (x + self.b_rec)), self.n.t()), self.m.t()
+            ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
+        
+        elif s is not None and self.neuromodulation == "additive":
+            rec_input = torch.matmul(
+                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
+            ) / self.N + self.w_inp_scale * input.matmul(self.w_inp) + s_trans
+
         else:
             rec_input = torch.matmul(
                 torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()

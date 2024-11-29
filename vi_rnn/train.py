@@ -315,7 +315,7 @@ def train_VAE(
     print("\nDone. Training took %.1f sec." % (time.time() - time0))
 
     # save trained network
-    fname = save_model(vae, training_params, task.task_params, directory=out_dir)
+    fname = save_model(vae, training_params, task.task_params, name=fname, directory=out_dir)
     print("Saved: " + fname)
     # upload trained models to WandB
     # if sync_wandb:

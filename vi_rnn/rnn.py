@@ -141,7 +141,7 @@ class LRRNN(nn.Module):
             train_latent_bias=params["train_latent_bias"],
             train_neuron_bias=params["train_neuron_bias"],
             neuromodulation=None if "neuromodulation" not in params.keys() else params["neuromodulation"],
-            train_nm_params=False if "train_nm_params" not in params.keys() else params["train_nm_params"]
+            train_nm_params=True if "train_nm_params" not in params.keys() else params["train_nm_params"]
         )
 
         # initialise the observation ste
@@ -260,7 +260,7 @@ class LRRNN(nn.Module):
             if z0 is None:
                 z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
             else:
-                if (z0.shape[0] == 1 or len(z0.shape)==1) and (self.d_s is None or self.d_s != 1):  # only z dimension is given
+                if (len(z0.shape)<=1 or z0.shape[0] == 1) and (self.d_s is None or self.d_s != 1):  # only z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(1, self.d_z, 1, 1)
                 elif len(z0.shape) < 4:  # trial and z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(

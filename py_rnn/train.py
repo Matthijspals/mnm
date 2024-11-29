@@ -218,7 +218,7 @@ def save_rnn(name, model, params, task_params, training_params):
         task_params: dictionary of task parameters
         training_params: dictionary of training parameters
     """
-
+    os.makedirs(name, exist_ok=True)
     state_dict_file = name + "_state_dict.pkl"
     params_file = name + "_params.pkl"
     task_params_file = name + "_task_params.pkl"
