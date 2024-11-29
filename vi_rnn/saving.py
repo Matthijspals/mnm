@@ -53,6 +53,7 @@ def save_model(model, training_params, task_params, name=None, directory=None):
     vae_params_file = directory + name + "_vae_params.pkl"
     task_params_file = directory + name + "_task_params.pkl"
     training_params_file = directory + name + "_training_params.pkl"
+    os.makedirs(directory, exist_ok=True)
     with open(vae_params_file, "wb") as f:
         pickle.dump(model_params, f)
     with open(training_params_file, "wb") as f:

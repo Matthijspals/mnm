@@ -309,7 +309,7 @@ class LRRNN(nn.Module):
         R = self.transition.get_rates(z, u=u, s=s)
         return R
 
-    def get_observation(self, z, v=None, noise_scale=0):
+    def get_observation(self, z, v=None, s=None, noise_scale=0):
         """
         Generate observations from the latent states
         Args:
@@ -322,11 +322,14 @@ class LRRNN(nn.Module):
             R = self.get_rates(z, u=v)
         elif self.readout_rates == "currents":
             m = self.transition.m_transform(self.transition.m)
+            R = torch.einsum("Nz,BzTK->BNTK", m, z)
             if v is not None:
                 Wu = self.transition.Wu
-                R = torch.einsum("Nz,BzTK->BNTK", m, z)+torch.einsum("Nz,BzTK->BNTK", Wu, v)
-            else:
-                R = torch.einsum("Nz,BzTK->BNTK", m, z)
+                R += torch.einsum("Nz,BzTK->BNTK", Wu, v)
+            if s is not None and self.transition.neuromodulation == "additive":
+                s_x = (self.transition.A @ s.T).T 
+                R += s_x
+                
         elif self.readout_rates == "z_and_v":
             R = torch.concat((z,v.repeat(1,1,1,z.shape[-1])),dim=1)
         else:

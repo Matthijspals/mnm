@@ -572,9 +572,8 @@ class Mante_Teacher(Dataset):
             ss.append(s)
         self.stim = torch.concatenate(ss)[:task_params["n_trials"]]
         self.s = self.stim[:, :, 2:]
-        self.sin_coeff = None
-
-        self.stim = self.stim[:, :, :2]
+        if task_params["neuromodulation"] is not None:
+            self.stim = self.stim[:, :, :2]
         self.dur = self.stim.shape[1]
         self.n_trials=self.stim.shape[0]
         self.N = U.shape[0]
@@ -625,8 +624,11 @@ class Mante_Teacher(Dataset):
                 )
         elif task_params["out"] == "currents":
             for t in range(self.dur):
-                # TODO: Add code for postsynaptic neuromodulation
                 self.data[:, :, t] = U @ self.latents[:, :, t] + (v[:, t] @ I).T
+                if task_params["neuromodulation"] == "additive":
+                    s_trans = A @ self.s[:, t, :].T
+                    self.data[:, :, t] += s_trans 
+
         self.data += torch.randn(self.N, self.n_trials, self.dur) * self.R_x
         self.task_params = task_params
         self.v=v

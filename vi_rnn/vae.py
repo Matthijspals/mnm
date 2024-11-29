@@ -81,7 +81,7 @@ class VAE(nn.Module):
         self.causal = vae_params["causal"]
         self.MSE_loss = nn.MSELoss()
 
-    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=False):
+    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=True):
         """
         Forward pass of the VAE
         Note, here the approximate posterior is the optimal linear combination of the encoder and the RNN
@@ -247,6 +247,9 @@ class VAE(nn.Module):
             if sim_v == True:
                 v_to_X = torch.einsum("xv, bvk -> bxk", self.rnn.transition.Wu, v.squeeze(-2))
                 x_t = x[:, :, t] - Obs_bias - v_to_X
+                if self.rnn.transition.neuromodulation == "additive": 
+                    s_to_X = (self.rnn.transition.A @ s[:, :, t].T).T
+                    x_t = x_t - s_to_X.unsqueeze(-1)
             else:
                 x_t = x[:, :, t] - Obs_bias
                 
@@ -281,6 +284,8 @@ class VAE(nn.Module):
             mean_x = torch.einsum("zx, bzk -> bxk", B, Qz) + Obs_bias
             if sim_v == True:
                 mean_x += v_to_X
+                if self.rnn.transition.neuromodulation == "additive":
+                    mean_x += s_to_X.unsqueeze(-1)
                 
             x_dist = torch.distributions.Normal(
                 loc=mean_x.permute(0, 2, 1), scale=eff_std_x
