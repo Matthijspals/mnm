@@ -51,7 +51,6 @@ class Inverse_Observation(nn.Module):
         mean = (
             self.mean(x, grad=self.params["obs_grad"]).unsqueeze(-1).repeat(1, 1, 1, k)
         )
-        print(mean.shape)
         logvar = (
             self.logvar.unsqueeze(0)
             .unsqueeze(-1)

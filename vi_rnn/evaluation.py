@@ -54,14 +54,14 @@ def predict_X(
             else: # take mean prediction of encoder 
                 _, z_hat, _, _ = vae.encoder(eval_data[:trial_dur])
             z0 = z_hat[:, :, 1].squeeze() 
-            print(f'z0 shape: {z0.shape}')
             # predict latent time series now that we have initial latent state 
-            Z, _ = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
+            Z, v = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
                                                cut_off=cut_off,
                                                z0=z0,
                                                u=task_input,
                                                s=s,
-                                               noise_scale=sim_latent_noise)
+                                               noise_scale=sim_latent_noise,
+                                               sim_v=True)
         else:
             # Evaluate on multiple short trajectories (trials) 
             if sim_latent_noise > 1e-8: 
@@ -69,16 +69,17 @@ def predict_X(
             else: 
                 _, z_hat, _, _ = vae.encoder(eval_data.permute(0, 2, 1))
             z0 = z_hat[:, :, :1]
-            Z = vae.rnn.get_latent_time_series(
+            Z, v = vae.rnn.get_latent_time_series(
                 time_steps=trial_dur,
                 cut_off=cut_off,
                 z0=z0, 
                 u=task_input,
                 s=s,
-                noise_scale=sim_latent_noise
+                noise_scale=sim_latent_noise,
+                sim_v=True
             )
         # transform latent time series into observations 
-        trajectories = vae.rnn.get_observation(Z, noise_scale=sim_obs_noise)
+        trajectories = vae.rnn.get_observation(Z, v=v, noise_scale=sim_obs_noise)
         
         if smooth: 
             window = signal.windows.hann(15) 
