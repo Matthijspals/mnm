@@ -377,17 +377,17 @@ class LR_RNNCell(nn.Module):
         # input to units
         if s is not None and self.neuromodulation == "rank":
             rec_input = torch.matmul(
-                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()) * s_trans, self.m.t()
+                torch.matmul(self.nonlinearity(x + self.b_rec), self.n.t()) * (torch.ones_like(s_trans) + s_trans), self.m.t()
             ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
        
         elif s is not None and self.neuromodulation == "postsynaptic":      
             rec_input = torch.matmul(
-                torch.matmul(s_trans * self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
+                torch.matmul((torch.ones_like(s_trans) + s_trans) * self.nonlinearity(x + self.b_rec), self.n.t()), self.m.t()
             ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
 
         elif s is not None and self.neuromodulation == "presynaptic":
             rec_input = torch.matmul(
-                torch.matmul(self.nonlinearity(s_trans * (x + self.b_rec)), self.n.t()), self.m.t()
+                torch.matmul(self.nonlinearity((torch.ones_like(s_trans) + s_trans) * (x + self.b_rec)), self.n.t()), self.m.t()
             ) / self.N + self.w_inp_scale * input.matmul(self.w_inp)
         
         elif s is not None and self.neuromodulation == "additive":

@@ -599,15 +599,15 @@ class Mante_Teacher(Dataset):
            
             if task_params["neuromodulation"] == "rank":
                 self.latents[:, :, t] += (
-                    torch.mul(s_trans, V @ self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
+                    torch.mul((torch.ones_like(s_trans) + s_trans), V @ self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
                 )
             elif task_params["neuromodulation"] == "presynaptic": 
                 self.latents[:, :, t] += (
-                    V @ self.non_lin(s_trans * X) + torch.randn(self.n_trials) * self.R_z
+                    V @ self.non_lin((torch.ones_like(s_trans) + s_trans) * X) + torch.randn(self.n_trials) * self.R_z
                 )
             elif task_params["neuromodulation"] == "postsynaptic": 
                 self.latents[:, :, t] += (
-                    V @ torch.mul(s_trans, self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
+                    V @ torch.mul((torch.ones_like(s_trans) + s_trans), self.non_lin(X)) + torch.randn(self.n_trials) * self.R_z
                 )
             elif task_params["neuromodulation"] == "additive": 
                 self.latents[:, :, t] += (

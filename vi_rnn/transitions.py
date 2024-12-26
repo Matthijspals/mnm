@@ -158,7 +158,7 @@ class Transition(nn.Module):
             s_z = s_z.view(s_z.shape[0], s_z.shape[1], 1, 1)
             z = (
                 A * z
-                +  s_z * torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
+                +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
                 + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
             )
 
@@ -201,10 +201,10 @@ class Transition(nn.Module):
                 X += s_x
 
             elif self.neuromodulation == "presynaptic": 
-                X *= s_x
+                X *= (1 + s_x)
 
             elif self.neuromodulation == 'postsynaptic':
-                R = s_x * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
+                R = (1 + s_x) * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
                 return R 
 
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
