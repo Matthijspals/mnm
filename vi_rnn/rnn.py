@@ -168,7 +168,6 @@ class LRRNN(nn.Module):
                 train_weights=params["train_obs_weights"],
                 identity_readout=params["identity_readout"],
                 out_nonlinearity=params["out_nonlinearity"]
-
             )
         else:
             self.observation = Observation(
@@ -209,7 +208,7 @@ class LRRNN(nn.Module):
                 torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
             )
 
-    def forward(self, z, s=None, noise_scale=0, u=None, v=None, sim_v=False):
+    def forward(self, z, s=None, s_tilde=None, noise_scale=0, u=None, v=None, sim_v=False, sim_s=False):
         """forward step of the RNN, predict z one step ahead
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
@@ -224,23 +223,30 @@ class LRRNN(nn.Module):
             v = u
         if u is not None:
             v = self.transition.step_input(v, u)
+        if s is not None and sim_s == False: 
+            s_tilde = s 
+        if s is not None: 
+            s_tilde = self.transition.step_input(
+                s_tilde.view(s_tilde.shape[0], s_tilde.shape[1], 1, 1),
+                s.view(s.shape[0], s.shape[1], 1, 1))
+            s_tilde = s_tilde.view(s_tilde.shape[0], s_tilde.shape[1])
 
         if noise_scale > 0:
             if self.params["scalar_noise_z"] == "Cov":
                 cov_chol = self.chol_cov_embed(self.R_z)
-                z = self.transition(z, v=v, s=s) + noise_scale * torch.einsum(
+                z = self.transition(z, v=v, s=s_tilde) + noise_scale * torch.einsum(
                     "xz, BzTK -> BxTK", cov_chol, self.normal.sample(z.shape)
                 )
             else:
-                z = self.transition(z, v=v, s=s) + noise_scale * self.normal.sample(
+                z = self.transition(z, v=v, s=s_tilde) + noise_scale * self.normal.sample(
                     z.shape
                 ) * self.std_embed_z(self.R_z).unsqueeze(0).unsqueeze(2).unsqueeze(3)
         else:
-            z = self.transition(z, v=v, s=s)
-        return z, v
+            z = self.transition(z, v=v, s=s_tilde)
+        return z, v, s_tilde
 
     def get_latent_time_series(
-        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None, sim_v=True
+        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None, sim_v=True, sim_s=False
     ):
         """
         Generate a latent time series of length time_steps
@@ -257,10 +263,11 @@ class LRRNN(nn.Module):
         with torch.no_grad():
             Z = []
             V = []
+            S = []
             if z0 is None:
                 z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
             else:
-                if (len(z0.shape)<=1 or z0.shape[0] == 1) and (self.d_s is None or self.d_s != 1):  # only z dimension is given
+                if len(z0.shape)<=1 or z0.shape[0] == 1:  # only z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(1, self.d_z, 1, 1)
                 elif len(z0.shape) < 4:  # trial and z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(
@@ -273,35 +280,59 @@ class LRRNN(nn.Module):
                 if len(u.shape) < 4:
                     u = u.unsqueeze(-1)  # add particle dim
                 v = torch.zeros(u.shape[0], self.d_u, 1, 1,device=self.R_x.device)
+                if s is not None: 
+                    s_tilde = torch.zeros(s.shape[0], s.shape[1])
                 for t in range(time_steps + cut_off):
-    
-                    z,v = self.forward(
+                    
+                    z,v,s_tilde = self.forward(
                             z, 
                             noise_scale=noise_scale, 
                             u=u[:, :, t].unsqueeze(2),
                             v=v,
                             s=None if s is None else s[:, :, t],
-                            sim_v=sim_v
+                            s_tilde=s_tilde,
+                            sim_v=sim_v,
+                            sim_s=sim_s
                         )
                     Z.append(z[:, :, 0])
                     V.append(v[:, :, 0])
+                    S.append(s_tilde) 
+
                 V = torch.stack(V)
                 V = V[cut_off:]
                 V = V.permute(1, 2, 0, 3)
-            
+               
             else:
                 print("no input")
+                if s is not None: 
+                    s_tilde = torch.zeros(s.shape[0], s.shape[1])
+                else: 
+                    s_tilde = None 
+
                 for t in range(time_steps + cut_off):
-                    z,_ = self.forward(z, noise_scale=noise_scale)
+                    z,_, s_tilde = self.forward(z, 
+                                                s=s[:, :, t] if s is not None else None, 
+                                                s_tilde=s_tilde, 
+                                                noise_scale=noise_scale)
                     Z.append(z[:, :, 0])
+                    S.append(s_tilde)
 
             # cut off the transients
             Z = torch.stack(Z)
             Z = Z[cut_off:]
             Z = Z.permute(1, 2, 0, 3)
 
-        if sim_v:
+            if s is not None: 
+                S = torch.stack(S) 
+                S = S[cut_off:]
+                S = S.permute(1, 2, 0)
+
+        if sim_v and sim_s:
+            return Z, V, S 
+        elif sim_v: 
             return Z, V
+        elif sim_s: 
+            return Z, S
         return Z
 
     def get_rates(self, z, u=None, s=None):
@@ -315,6 +346,7 @@ class LRRNN(nn.Module):
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
             noise_scale (float): scale of the noise
+            s (torch.tensor; n_trials x dim_s x time_steps): Neuromodulation signals
         Returns:
             X (torch.tensor; n_trials x dim_x x time_steps x k): observations
         """
@@ -327,8 +359,12 @@ class LRRNN(nn.Module):
                 Wu = self.transition.Wu
                 R += torch.einsum("Nz,BzTK->BNTK", Wu, v)
             if s is not None and self.transition.neuromodulation == "additive":
-                s_x = (self.transition.A @ s.T).T 
-                R += s_x
+                if len(s.shape) == 3:
+                    s_x = torch.einsum("Ns,BsT->BNT", self.transition.A, s)
+                else: 
+                    s_x = (self.transition.A @ s.T).T
+                    s_x = s_x.unsqueeze(-1)
+                R += s_x.unsqueeze(-1)
                 
         elif self.readout_rates == "z_and_v":
             R = torch.concat((z,v.repeat(1,1,1,z.shape[-1])),dim=1)

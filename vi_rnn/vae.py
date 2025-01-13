@@ -4,7 +4,7 @@ import sys
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
 
-from encoders import Inverse_Observation, CNN_encoder_causal
+from encoders import Inverse_Observation, CNN_encoder
 from vi_rnn.rnn import LRRNN
 import torch.nn as nn
 import torch
@@ -53,8 +53,8 @@ class VAE(nn.Module):
             print("WARNING: prior does not exist")
 
         self.has_encoder = True
-        if vae_params["enc_architecture"] == "CNN_causal":
-            self.encoder = CNN_encoder_causal(
+        if vae_params["enc_architecture"] == "CNN":
+            self.encoder = CNN_encoder(
                 self.dim_x, self.dim_z, vae_params["enc_params"]
             )
         elif vae_params["enc_architecture"] == "Inv_Obs":
@@ -81,7 +81,7 @@ class VAE(nn.Module):
         self.causal = vae_params["causal"]
         self.MSE_loss = nn.MSELoss()
 
-    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=True):
+    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=True, sim_s=True):
         """
         Forward pass of the VAE
         Note, here the approximate posterior is the optimal linear combination of the encoder and the RNN
@@ -91,7 +91,9 @@ class VAE(nn.Module):
             u (torch.tensor; n_trials x dim_U x time_steps): input stim
             k (int): number of particles
             resample (str): resampling method
+            s (torch.tensor; n_trials x dim_s x time_steps): neuromodulators
             sim_v (bool): simulate the input dynamics
+            sim_s (bool): simulate neuromodulator dynamics 
         Returns:
             Loss (torch.tensor; n_trials): loss
             Qzs (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the approximate posterior
@@ -109,8 +111,6 @@ class VAE(nn.Module):
         ll_qzs = []
         Qzs = []
         alphas = []
-
-
 
         # project and clamp the variances
         eff_var_prior = self.rnn.full_cov_embed(self.rnn.R_z)
@@ -131,6 +131,11 @@ class VAE(nn.Module):
         else: #initialise in the affine subspace corresponding to the input
             prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
             v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
+
+        if sim_s: 
+            s_tilde = torch.zeros(batch_size, self.dim_s)
+        else: 
+            s_tilde = s[:, :, 0] 
 
         x = x.unsqueeze(-1)  # add particle dimension
 
@@ -224,7 +229,7 @@ class VAE(nn.Module):
 
             # Get the prior mean
             if s is not None:
-                prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s[:, :, t], v=v).squeeze(2)
+                prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
             else:
                 prior_mean = self.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
 
@@ -233,6 +238,15 @@ class VAE(nn.Module):
                 v = self.rnn.transition.step_input(v,u[:, :, t-1].unsqueeze(2))   
             else:
                 v = u[:, :, t].unsqueeze(2)
+
+            #progress neuromodulator dynamics 
+            if sim_s: 
+                s_tilde = self.rnn.transition.step_input(
+                    s_tilde.view(s_tilde.shape[0], s_tilde.shape[1], 1, 1), 
+                    s[:, :, t-1].view(s.shape[0], s.shape[1], 1, 1))
+                s_tilde = s_tilde.view(s_tilde.shape[0], s_tilde.shape[1])        
+            else: 
+                s_tilde = s[:, :, t]
 
             # Calculate the Kalman gain and interpolation alpha
             Kalman_gain = (
@@ -247,11 +261,13 @@ class VAE(nn.Module):
             if sim_v == True:
                 v_to_X = torch.einsum("xv, bvk -> bxk", self.rnn.transition.Wu, v.squeeze(-2))
                 x_t = x[:, :, t] - Obs_bias - v_to_X
-                if self.rnn.transition.neuromodulation == "additive": 
-                    s_to_X = (self.rnn.transition.A @ s[:, :, t].T).T
-                    x_t = x_t - s_to_X.unsqueeze(-1)
             else:
                 x_t = x[:, :, t] - Obs_bias
+
+            if sim_s: 
+                s_to_X = (self.rnn.transition.A @ s_tilde.T).T
+                x_t = x_t - s_to_X.unsqueeze(-1)
+            
                 
             mean_Q = torch.einsum(
                 "zs,BsK->BzK", one_min_alpha, prior_mean
@@ -284,7 +300,7 @@ class VAE(nn.Module):
             mean_x = torch.einsum("zx, bzk -> bxk", B, Qz) + Obs_bias
             if sim_v == True:
                 mean_x += v_to_X
-                if self.rnn.transition.neuromodulation == "additive":
+                if sim_s == True:
                     mean_x += s_to_X.unsqueeze(-1)
                 
             x_dist = torch.distributions.Normal(
@@ -341,7 +357,7 @@ class VAE(nn.Module):
         )
 
     def forward_VGTF(
-        self, x, s, u=None, k=1, resample=False, out_likelihood="Gauss", t_forward=0
+        self, x, s=None, u=None, k=1, resample=False, out_likelihood="Gauss", t_forward=0, sim_v=False, sim_s=False
     ):
         """
         Forward pass of the VAE
@@ -354,6 +370,7 @@ class VAE(nn.Module):
             resample (str): resampling method
             out_likelihood (str): likelihood of the output
             t_forward (int): number of time steps to predict forward without using the encoder
+            sim_s (bool): simulate neuromodulator dynamics 
 
         Returns:
             Loss (torch.tensor; n_trials): loss
@@ -416,15 +433,7 @@ class VAE(nn.Module):
             max=np.sqrt(self.max_var),
         )  # 1,Dx,1
 
-        # Cut some of the data if a CNN was used without padding
-        cl = self.encoder.cut_len
-        if cl > 0:
-            if self.causal:
-                x_hat = x[:, :, cl:].unsqueeze(-1)
-            else:
-                x_hat = x[:, :, cl // 2 : -cl // 2].unsqueeze(-1)
-        else:
-            x_hat = x.unsqueeze(-1)
+        x_hat = x.unsqueeze(-1)
 
         # Initialise some lists
         bs, dim_z, time_steps, _ = Esample.shape
@@ -436,8 +445,20 @@ class VAE(nn.Module):
         Qzs = []
         alphas = []
 
+        batch_size, dim_x, time_steps = x.shape
         # Get the initial prior mean
-        prior_mean = self.rnn.get_initial_state(u[:, :, 0]).unsqueeze(2)
+        if sim_v:
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
+        
+        else: #initialise in the affine subspace corresponding to the input
+            prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
+            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension  
+
+        if sim_s: 
+            s_tilde = torch.zeros(s.shape[0], self.dim_s)
+        elif s is not None: 
+            s_tilde = s[:, :, 0] 
 
         # Calculate the initial posterior mean and covariance
         precZ = 1 / eff_var_prior_t0
@@ -447,7 +468,7 @@ class VAE(nn.Module):
         mean_Q = (1 - alpha) * prior_mean + alpha * Emean[:, :, 0]
         eff_var_Q = 1 / precQ
 
-        # Sample from the posterior and calculate likelihood
+        # Sample from the posterior and calculate likelihood            
         Q_dist = torch.distributions.Normal(loc=mean_Q, scale=torch.sqrt(eff_var_Q))
         Qz = Q_dist.rsample()
         ll_qz = Q_dist.log_prob(Qz).sum(axis=1)
@@ -494,14 +515,26 @@ class VAE(nn.Module):
                 print("use, one of: multinomial, systematic, none")
 
             # Get the prior mean
-            if s is not None: 
-                prior_mean = self.rnn(
-                    Qz.unsqueeze(-2), s=s[:, :, t], noise_scale=0, u=u[:, :, t].unsqueeze(2)
-                ).squeeze(-2)
-            else: 
-                prior_mean = self.rnn(
-                    Qz.unsqueeze(-2), s=None, noise_scale=0, u=u[:, :, t].unsqueeze(2)
-                ).squeeze(-2)
+            if s is not None:
+                prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
+            else:
+                prior_mean = self.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
+
+            #progress input dynamics
+            if sim_v:
+                v = self.rnn.transition.step_input(v,u[:, :, t-1].unsqueeze(2))   
+            else:
+                v = u[:, :, t].unsqueeze(2)
+
+            # progress neuromodulator dynamics 
+            if sim_s: 
+                s_tilde = self.rnn.transition.step_input(
+                    s_tilde.view(s_tilde.shape[0], s_tilde.shape[1], 1, 1),
+                    s[:, :, t-1].view(s.shape[0], s.shape[1], 1, 1)
+                )
+                s_tilde = s_tilde.view(s_tilde.shape[0], s_tilde.shape[1])
+            elif s is not None: 
+                s_tilde = s[:, :, t] 
 
             # Calculate the posterior mean and covariance
             precZ = 1 / eff_var_prior
@@ -525,7 +558,7 @@ class VAE(nn.Module):
             )
 
             # Get the observation mean and calculate likelihood of the data
-            mean_x = self.rnn.get_observation(Qz.unsqueeze(-2), noise_scale=0).squeeze(
+            mean_x = self.rnn.get_observation(Qz.unsqueeze(-2), v=v, s=s_tilde if s is not None else s, noise_scale=0).squeeze(
                 -2
             )
             ll_x = ll_x_func(x_hat[:, :, t], mean_x, eff_std_x)

@@ -192,7 +192,7 @@ def train_VAE(
         batch_ll_x = 0
         batch_loss = 0
 
-        for data_sample in dataloader:
+        for data_idx, data_sample in enumerate(dataloader):
             inputs, stim = data_sample[0], data_sample[1]
             if training_params["neuromodulation"]:
                 s = data_sample[2]
@@ -208,7 +208,8 @@ def train_VAE(
                         k=training_params["k"],
                         resample=training_params["resample"],
                         s=s,
-                        sim_v=training_params["sim_v"]
+                        sim_v=training_params["sim_v"],
+                        sim_s=training_params["sim_s"]
                     )
                 )
             elif training_params["loss_f"] == "VGTF":
@@ -220,7 +221,9 @@ def train_VAE(
                         resample=training_params["resample"],
                         out_likelihood=training_params["observation_likelihood"],
                         t_forward=training_params["t_forward"],
-                        s=s
+                        s=s,
+                        sim_v=training_params["sim_v"],
+                        sim_s=training_params["sim_s"]
                     )
                 )
             batch_ll += log_likelihood.mean().item()
@@ -242,10 +245,10 @@ def train_VAE(
                 print("UH OH FOUND NAN, stopping training...")
                 stop_training = True
                 break
-
+            
             # backprop
             loss.backward()
-
+            
             # gradient clipping
             if training_params["grad_norm"]:
                 nn.utils.clip_grad_norm_(

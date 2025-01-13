@@ -10,6 +10,7 @@ import scipy.ndimage as ndimage
 import scipy.signal as signal
 import numpy as np
 from scipy.stats import zscore
+from scipy.signal import convolve 
 
 def predict_X(
         vae, 
@@ -24,7 +25,8 @@ def predict_X(
         sim_latent_noise=1,
         smooth=False, 
         neuromodulation=False,
-        sim_v=True
+        sim_v=True,
+        sim_s=False
 ):
     """
     Get predicted trajectories 
@@ -55,13 +57,14 @@ def predict_X(
                 _, z_hat, _, _ = vae.encoder(eval_data[:trial_dur])
             z0 = z_hat[:, :, 1].squeeze() 
             # predict latent time series now that we have initial latent state 
-            Z, v = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
+            Z, v, S = vae.rnn.get_latent_time_series(time_steps=trial_dur, 
                                                cut_off=cut_off,
                                                z0=z0,
                                                u=task_input,
                                                s=s,
                                                noise_scale=sim_latent_noise,
-                                               sim_v=True)
+                                               sim_v=sim_v,
+                                               sim_s=sim_s)
         else:
             # Evaluate on multiple short trajectories (trials) 
             if sim_latent_noise > 1e-8: 
@@ -69,17 +72,18 @@ def predict_X(
             else: 
                 _, z_hat, _, _ = vae.encoder(eval_data.permute(0, 2, 1))
             z0 = z_hat[:, :, :1]
-            Z, v = vae.rnn.get_latent_time_series(
+            Z, v, S = vae.rnn.get_latent_time_series(
                 time_steps=trial_dur,
                 cut_off=cut_off,
                 z0=z0, 
                 u=task_input,
                 s=s,
                 noise_scale=sim_latent_noise,
-                sim_v=True
+                sim_v=sim_v,
+                sim_s=sim_s
             )
         # transform latent time series into observations 
-        trajectories = vae.rnn.get_observation(Z, v=v, noise_scale=sim_obs_noise)
+        trajectories = vae.rnn.get_observation(Z, v=v, s=S, noise_scale=sim_obs_noise)
         
         if smooth: 
             window = signal.windows.hann(15) 
@@ -252,3 +256,32 @@ def mean_rate(data_gen, data_real):
         np.mean((data_mean_rates - data_gen_mean_rates) ** 2) / data_gen.shape[1]
     )
     return mean_rate_error
+
+def van_rossum_distance(spike_train1, spike_train2, tau, T):
+    """
+    Computes the Van Rossum distance between two spike trains.
+
+    Args:
+    - spike_train1: List or array of spikes of neuron 1.
+    - spike_train2: List or array of spikes of neuron 2.
+    - tau: Time constant for the exponential decay.
+    - T: Total duration of the simulation (for defining the time axis).
+
+    Returns:
+    - Van Rossum distance between spike_train1 and spike_train2.
+    """
+    time_bins = np.arange(0, T, 1)
+
+    # Define the exponential kernel
+    kernel = np.exp(-time_bins / tau)
+    kernel /= np.sum(kernel)  # Normalize kernel
+
+    # Convolve spike trains with the exponential kernel
+    filtered_spike_train1 = convolve(spike_train1, kernel, mode='same')
+    filtered_spike_train2 = convolve(spike_train2, kernel, mode='same')
+
+    # Compute the Euclidean distance between the convolved signals
+    distance = np.sqrt(np.trapz((filtered_spike_train1 - filtered_spike_train2) ** 2, dx=1))
+
+
+    return distance

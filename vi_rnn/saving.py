@@ -120,6 +120,13 @@ def load_model(name, load_encoder=True):
             vae_params["rnn_params"]["out_nonlinearity"] = "identity"            
     if "dim_s" not in vae_params: 
         vae_params["dim_s"] = vae_params["dim_z"]
+    if "padding_location" not in vae_params["enc_params"]:
+        if vae_params["causal"]:
+            vae_params["enc_params"]["padding_location"] = "causal"
+            vae_params["enc_architecture"] = "CNN"
+        else: 
+            vae_params["enc_params"]["padding_location"] = "acausal"
+            
     model = VAE(vae_params)
 
     # More backwards compatibility

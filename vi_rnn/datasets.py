@@ -3,10 +3,10 @@ import torch
 import numpy as np
 import h5py
 from pathlib import Path
-from mante import generate_mante_data
+from data.mante import generate_mante_data
 
 class Basic_dataset(Dataset):
-    def __init__(self, task_params, data, data_eval=None):
+    def __init__(self, task_params, data, s=None, data_eval=None):
         """
         Basic dataset class for time series data that returns a random trial of length self.dur
         Args:
@@ -15,12 +15,17 @@ class Basic_dataset(Dataset):
             data_eval (np.ndarray; T x dim_x): optional evaluation data
         """
         self.task_params = task_params
-        self.data = torch.from_numpy(data)
+        self.data = torch.from_numpy(data).to(torch.float32)
         if data_eval is not None:
-            self.data_eval = torch.from_numpy(data_eval)
+            self.data_eval = torch.from_numpy(data_eval).to(torch.float32)
         else:
             self.data_eval = self.data
         self.dur = task_params["dur"]
+        self.s = None 
+        if s is not None:
+            self.s = torch.from_numpy(s).to(torch.float32)
+            if len(self.s.shape) == 1:
+                self.s = self.s.unsqueeze(0)
         self.n_trials = task_params["n_trials"]
 
     def __len__(self):
@@ -38,10 +43,14 @@ class Basic_dataset(Dataset):
         """
         t_start = torch.randint(low=0, high=self.data.shape[0] - self.dur, size=(1,))[0]
         t_end = t_start + self.dur
-        return self.data[t_start:t_end].T, torch.zeros(
-            0, self.dur, device=self.data.device
-        )
-
+        if self.s is None:
+            return self.data[t_start:t_end].T, torch.zeros(
+                0, self.dur, device=self.data.device
+            )
+        else: 
+            return self.data[t_start:t_end].T, torch.zeros(
+                0, self.dur, device=self.data.device
+            ), self.s[:, t_start:t_end]
 
 class Oscillations_Cont(Dataset):
     def __init__(self, task_params, U, V, B, decay=0.9):
@@ -654,3 +663,46 @@ class Mante_Teacher(Dataset):
             self.stim[idx].T.to(device=self.data.device), \
             self.s[idx].T.to(device=self.data.device)
     
+
+class CPT(Dataset): 
+
+    def __init__(self, task_params):
+        self.num_letters = task_params["num_letters"]
+        probs = torch.ones((self.num_letters)) / self.num_letters
+        self.seq_len = task_params["seq_len"] 
+        self.dist = torch.distributions.Categorical(probs)
+        self.n_trials = task_params["n_trials"]
+
+    def __len__(self): 
+        return self.n_trials 
+
+    def __getitem__(self, idx): 
+        """
+        Returns a trial of length seq_len 
+        
+        Returns: 
+            input (torch.tensor; seq_len x n_inp): task inputs
+            targets (torch.tensor; seq_len x n_targets): expected outputs 
+            mask (torch.tensor; seq_len x n_targets): masks
+        """
+        # sample seq_len letters from a categorical distribution 
+        samples = self.dist.sample((self.seq_len,))
+        # convert to one-hot encoding 
+        input = torch.nn.functional.one_hot(samples, num_classes=self.num_letters).to(torch.float32) 
+        # define binary targets 
+        targets = torch.zeros((self.seq_len, 2)).to(torch.float32)
+        diff = samples.diff()
+        same_idx = torch.where(diff == 0)[0] + 1
+        mask = torch.ones(targets.shape[0], dtype=torch.bool)
+        mask[same_idx] = False 
+        targets[same_idx, 0] = 1.0
+        targets[mask, 1] = 1.0
+        mask = torch.ones((self.seq_len, 1)).to(torch.float32)
+        return input, (targets, input), mask 
+             
+
+class CPT_Teacher(Dataset): 
+    def __init__(self, task_params, teacher_params):
+        self.neuromodulation = 'presynaptic'
+        self.gain = 1.0
+        self.non_linearity = 'sigmoid'

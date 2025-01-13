@@ -65,7 +65,7 @@ def extract_phase_plane_rnn(rnn, xlims, ylims, n_points=30, inp=None):
     return X, Y, u, v, norm
 
 
-def extract_phase_plane_vae(vae, xlims, ylims, n_points=30, h=10, inp=None):
+def extract_phase_plane_vae(vae, xlims, ylims, n_points=100, h=10, inp=None):
     """Extract the phase plane of the vae.rnn.
     Args:
         vae: VAE, VAE model
