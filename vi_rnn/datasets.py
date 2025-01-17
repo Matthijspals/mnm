@@ -52,6 +52,67 @@ class Basic_dataset(Dataset):
                 0, self.dur, device=self.data.device
             ), self.s[:, t_start:t_end]
 
+
+class DTTDataset(Dataset):
+    def __init__(self, task_params, data, s_train=None, s_test=None, data_eval=None, seq_periods=None, seq_periods_eval=None):
+        """
+        Basic dataset class for time series data that returns a random trial of length self.dur
+        Args:
+            task_params (dict): dictionary of task parameters
+            data (np.ndarray; T x dim_x): time series data
+            data_eval (np.ndarray; T x dim_x): optional evaluation data
+            seq_periods (list; N x 2): start and end periods of distinct sequences in data
+            seq_periods_eval (list; N x 2): start and end periods of distinct sequences in data
+        """
+        self.task_params = task_params
+        self.data = torch.from_numpy(data).to(torch.float32)
+        if data_eval is not None:
+            self.data_eval = torch.from_numpy(data_eval).to(torch.float32)
+        else:
+            self.data_eval = self.data
+        self.dur = task_params["dur"]
+        self.s_train, self.s_test = None, None  
+        if s_train is not None:
+            self.s_train = torch.from_numpy(s_train).to(torch.float32)
+            self.s_test = torch.from_numpy(s_test).to(torch.float32)
+            if len(self.s_train.shape) == 1:
+                self.s_train = self.s_train.unsqueeze(0)
+                self.s_test = self.s_test.unsqueeze(0)
+
+        self.n_trials = task_params["n_trials"]
+        self.seq_periods = seq_periods
+        self.seq_periods_eval = seq_periods_eval
+
+    def __len__(self):
+        """Return number of trials in an epoch"""
+        return self.n_trials
+
+    def __getitem__(self, idx):
+        """
+        Return a trial of length self.dur
+        Args:
+            idx (int): trial index, arbitrary as trials are sampled randomly
+        Returns:
+            trial (torch.tensor; dim_x x self.dur): trial of length self.dur
+            input (torch.tensor; n_inp x self.dur): optional input on which the model is conditioned
+        """
+        if self.seq_periods is not None: 
+            # randomly select sequence period
+            seq_sel = torch.randint(low=0, high=len(self.seq_periods), size=(1,))[0]
+            t_start = torch.randint(low=self.seq_periods[seq_sel][0], high=self.seq_periods[seq_sel][1] - self.dur, size=(1,))[0]
+        else:               
+            t_start = torch.randint(low=0, high=self.data.shape[0] - self.dur, size=(1,))[0]
+        t_end = t_start + self.dur
+        if self.s_train is None:
+            return self.data[t_start:t_end].T, torch.zeros(
+                0, self.dur, device=self.data.device
+            )
+        else: 
+            return self.data[t_start:t_end].T, torch.zeros(
+                0, self.dur, device=self.data.device
+            ), self.s_train[:, t_start:t_end]
+
+
 class Oscillations_Cont(Dataset):
     def __init__(self, task_params, U, V, B, decay=0.9):
         """

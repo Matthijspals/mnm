@@ -50,7 +50,7 @@ class Transition(nn.Module):
         self.neuromodulation = neuromodulation
         #Do Glorot initialization
         if self.neuromodulation == "additive" or self.neuromodulation == "presynaptic" or self.neuromodulation == "postsynaptic":
-            self.A = nn.Parameter(torch.empty(self.dx, self.ds), requires_grad=train_nm_params)
+            self.A = nn.Parameter(torch.empty(hidden_dim, self.ds), requires_grad=train_nm_params)
             self.A = nn.init.xavier_normal_(self.A)
         elif self.neuromodulation == "rank": 
             self.A = nn.Parameter(torch.empty(self.dz, self.ds), requires_grad=train_nm_params)
@@ -151,8 +151,8 @@ class Transition(nn.Module):
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
         A = self.cast_A(self.AW)
-        R = self.get_rates(z, s=s, v=v) 
-
+        R = self.get_rates(z, s=s, v=v)
+        
         if self.neuromodulation == 'rank':
             s_z = (self.A @ s.T).T
             s_z = s_z.view(s_z.shape[0], s_z.shape[1], 1, 1)
@@ -206,7 +206,7 @@ class Transition(nn.Module):
             elif self.neuromodulation == 'postsynaptic':
                 R = (1 + s_x) * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
                 return R 
-
+            
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
         return R
 

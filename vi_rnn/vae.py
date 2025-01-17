@@ -456,7 +456,7 @@ class VAE(nn.Module):
             v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension  
 
         if sim_s: 
-            s_tilde = torch.zeros(s.shape[0], self.dim_s)
+            s_tilde = torch.zeros(s.shape[0], self.dim_s, device=x.device)
         elif s is not None: 
             s_tilde = s[:, :, 0] 
 

@@ -65,7 +65,7 @@ def extract_phase_plane_rnn(rnn, xlims, ylims, n_points=30, inp=None):
     return X, Y, u, v, norm
 
 
-def extract_phase_plane_vae(vae, xlims, ylims, n_points=100, h=10, inp=None):
+def extract_phase_plane_vae(vae, xlims, ylims, n_points=100, h=10, inp=None, nonlinearity='relu'):
     """Extract the phase plane of the vae.rnn.
     Args:
         vae: VAE, VAE model
@@ -97,7 +97,11 @@ def extract_phase_plane_vae(vae, xlims, ylims, n_points=100, h=10, inp=None):
 
     def dyn_eq(x, y):
         z = np.array([x, y])
-        zn = (decay) * z + V @ np_relu(U @ z - B + I @ inp)
+        if nonlinearity == 'relu':
+            zn = (decay) * z + V @ np_relu(U @ z - B + I @ inp)
+        elif nonlinearity == 'clipped_relu': 
+            zn = (decay) * z + V @ np_relu(U @ z + B + I @ inp) - np_relu(U @ z + I @ inp)
+            
         dz = (zn - z) / h
         return dz[0], dz[1]
 
