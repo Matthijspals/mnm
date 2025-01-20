@@ -313,6 +313,8 @@ class LRRNN(nn.Module):
                     z,_, s_tilde = self.forward(z, 
                                                 s=s[:, :, t] if s is not None else None, 
                                                 s_tilde=s_tilde, 
+                                                sim_v=sim_v,
+                                                sim_s=sim_s,
                                                 noise_scale=noise_scale)
                     Z.append(z[:, :, 0])
                     S.append(s_tilde)

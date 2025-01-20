@@ -133,10 +133,9 @@ class VAE(nn.Module):
             v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
 
         if sim_s: 
-            s_tilde = torch.zeros(batch_size, self.dim_s)
+            s_tilde = torch.zeros(batch_size, self.dim_s).to(device=x.device)
         else: 
-            s_tilde = s[:, :, 0] 
-
+            s_tilde = s[:, :, 0] if s is not None else s
         x = x.unsqueeze(-1)  # add particle dimension
 
         # Get the observation weights and bias
@@ -246,7 +245,7 @@ class VAE(nn.Module):
                     s[:, :, t-1].view(s.shape[0], s.shape[1], 1, 1))
                 s_tilde = s_tilde.view(s_tilde.shape[0], s_tilde.shape[1])        
             else: 
-                s_tilde = s[:, :, t]
+                s_tilde = s[:, :, t] if s is not None else s
 
             # Calculate the Kalman gain and interpolation alpha
             Kalman_gain = (
@@ -300,8 +299,8 @@ class VAE(nn.Module):
             mean_x = torch.einsum("zx, bzk -> bxk", B, Qz) + Obs_bias
             if sim_v == True:
                 mean_x += v_to_X
-                if sim_s == True:
-                    mean_x += s_to_X.unsqueeze(-1)
+            if sim_s == True:
+                mean_x += s_to_X.unsqueeze(-1)
                 
             x_dist = torch.distributions.Normal(
                 loc=mean_x.permute(0, 2, 1), scale=eff_std_x
