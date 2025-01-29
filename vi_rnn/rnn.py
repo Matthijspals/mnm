@@ -194,19 +194,30 @@ class LRRNN(nn.Module):
             )
         elif params["initial_state"] == "trainable":
             self.initial_state = nn.Parameter(torch.zeros(self.d_z), requires_grad=True)
-            self.get_initial_state = lambda u: self.initial_state.unsqueeze(
-                0
-            ) + orth_proj(
-                self.transition.m_transform(self.transition.m),
-                torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
-            )
+            if self.transition.neuromodulation == 'additive': 
+                self.get_initial_state = lambda u, s: self.initial_state.unsqueeze(
+                    0
+                ) + orth_proj(
+                    self.transition.m_transform(self.transition.m),
+                    torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
+                ) + orth_proj(
+                    self.transition.m_transform(self.transition.m),
+                    (self.transition.A @ s.T).T
+                )
+            else: 
+                self.get_initial_state = lambda u, _: self.initial_state.unsqueeze(
+                    0
+                ) + orth_proj(
+                    self.transition.m_transform(self.transition.m),
+                    torch.einsum("Nu,Bu->BN", self.transition.Wu, u)
+                )
         elif params["initial_state"] == "bias":
             self.get_initial_state = lambda u: -self.transition.h.unsqueeze(
                 0
             ) + orth_proj(
                 self.transition.m_transform(self.transition.m),
                 torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
-            )
+            ) 
 
     def forward(self, z, s=None, s_tilde=None, noise_scale=0, u=None, v=None, sim_v=False, sim_s=False):
         """forward step of the RNN, predict z one step ahead

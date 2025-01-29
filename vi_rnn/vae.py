@@ -123,19 +123,20 @@ class VAE(nn.Module):
         eff_var_prior_t0_chol = self.rnn.chol_cov_embed(self.rnn.R_z_t0)
         batch_size, dim_x, time_steps = x.shape
 
-        # Get the initial prior mean
-        if sim_v:
-            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
-            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
-        
-        else: #initialise in the affine subspace corresponding to the input
-            prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
-            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
-
         if sim_s: 
             s_tilde = torch.zeros(batch_size, self.dim_s).to(device=x.device)
         else: 
             s_tilde = s[:, :, 0] if s is not None else s
+
+        # Get the initial prior mean
+        if sim_v:
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
+        
+        else: #initialise in the affine subspace corresponding to the input
+            prior_mean = self.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
+            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
+
         x = x.unsqueeze(-1)  # add particle dimension
 
         # Get the observation weights and bias
@@ -445,19 +446,22 @@ class VAE(nn.Module):
         alphas = []
 
         batch_size, dim_x, time_steps = x.shape
-        # Get the initial prior mean
-        if sim_v:
-            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
-            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
-        
-        else: #initialise in the affine subspace corresponding to the input
-            prior_mean = self.rnn.get_initial_state(u[:,:,0]).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
-            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension  
 
         if sim_s: 
             s_tilde = torch.zeros(s.shape[0], self.dim_s, device=x.device)
         elif s is not None: 
-            s_tilde = s[:, :, 0] 
+            s_tilde = s[:, :, 0]
+        else: 
+            s_tilde = None 
+
+        # Get the initial prior mean
+        if sim_v:
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
+        
+        else: #initialise in the affine subspace corresponding to the input
+            prior_mean = self.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k) #BS,Dz,K
+            v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
 
         # Calculate the initial posterior mean and covariance
         precZ = 1 / eff_var_prior_t0
