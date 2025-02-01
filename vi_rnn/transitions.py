@@ -204,7 +204,7 @@ class Transition(nn.Module):
                 X *= (1 + s_x)
 
             elif self.neuromodulation == 'postsynaptic':
-                R = s_x * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
+                R = (1 + s_x) * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
                 return R 
             
         R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))

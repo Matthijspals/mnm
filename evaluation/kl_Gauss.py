@@ -54,7 +54,7 @@ def calc_kl_mc(mu_inf, mu_gen, scale):
     """Calculate the KL divergence between two Gaussian mixture models with diagonal covariance matrices via Monte Carlo sampling"""
 
     # number of MC samples
-    mc_n = 1000
+    mc_n = 2000
     t = torch.randint(0, mu_inf.shape[0], (mc_n,))
 
     Norm = torch.randn(mu_inf[t].shape).to(device=mu_inf.device)
