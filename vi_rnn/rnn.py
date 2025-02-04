@@ -292,7 +292,7 @@ class LRRNN(nn.Module):
                     u = u.unsqueeze(-1)  # add particle dim
                 v = torch.zeros(u.shape[0], self.d_u, 1, 1,device=self.R_x.device)
                 if s is not None: 
-                    s_tilde = torch.zeros(s.shape[0], s.shape[1])
+                    s_tilde = torch.zeros(s.shape[0], s.shape[1], device=self.R_x.device)
                 for t in range(time_steps + cut_off):
                     
                     z,v,s_tilde = self.forward(
@@ -316,7 +316,7 @@ class LRRNN(nn.Module):
             else:
                 print("no input")
                 if s is not None: 
-                    s_tilde = torch.zeros(s.shape[0], s.shape[1])
+                    s_tilde = torch.zeros(s.shape[0], s.shape[1], device=self.R_x.device)
                 else: 
                     s_tilde = None 
 
