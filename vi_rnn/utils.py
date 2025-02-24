@@ -282,6 +282,6 @@ def spike_times_to_binary(spike_times, t_start, t_end):
     bin_arr = np.zeros((len(spike_times), (t_end - t_start + 1)))
     for i in range(len(spike_times)):
         spike_times[i] = spike_times[i][spike_times[i] <= t_end]
-        bin_arr[i, spike_times[i]] = 1.0
+        bin_arr[i, int(spike_times[i])] = 1.0
     return bin_arr
 

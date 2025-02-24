@@ -200,10 +200,11 @@ class LRRNN(nn.Module):
                 ) + orth_proj(
                     self.transition.m_transform(self.transition.m),
                     torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
-                ) + orth_proj(
-                    self.transition.m_transform(self.transition.m),
-                    (self.transition.A @ s.T).T
-                )
+                ) 
+                # + orth_proj(
+                #     self.transition.m_transform(self.transition.m),
+                #     (self.transition.A @ s.T).T
+                # )
             else: 
                 self.get_initial_state = lambda u, _: self.initial_state.unsqueeze(
                     0
@@ -301,7 +302,7 @@ class LRRNN(nn.Module):
                             u=u[:, :, t].unsqueeze(2),
                             v=v,
                             s=None if s is None else s[:, :, t],
-                            s_tilde=s_tilde,
+                            s_tilde=None if s is None else s_tilde,
                             sim_v=sim_v,
                             sim_s=sim_s
                         )
@@ -314,7 +315,6 @@ class LRRNN(nn.Module):
                 V = V.permute(1, 2, 0, 3)
                
             else:
-                print("no input")
                 if s is not None: 
                     s_tilde = torch.zeros(s.shape[0], s.shape[1], device=self.R_x.device)
                 else: 

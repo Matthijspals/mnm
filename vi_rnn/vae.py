@@ -112,16 +112,18 @@ class VAE(nn.Module):
         Qzs = []
         alphas = []
 
-        # project and clamp the variances
+        #project and clamp the variances
         eff_var_prior = self.rnn.full_cov_embed(self.rnn.R_z)
-        eff_var_x_diag = torch.diag(
-            torch.clip(self.rnn.var_embed_x(self.rnn.R_x), 1e-8)
-        )
-        eff_std_x = torch.clip(self.rnn.std_embed_x(self.rnn.R_x), 1e-4)
         eff_var_prior_t0 = self.rnn.full_cov_embed(self.rnn.R_z_t0)
         eff_var_prior_chol = self.rnn.chol_cov_embed(self.rnn.R_z)
         eff_var_prior_t0_chol = self.rnn.chol_cov_embed(self.rnn.R_z_t0)
+
+        eff_var_x = torch.clip(self.rnn.var_embed_x(self.rnn.R_x), 1e-8)
+        eff_var_x_inv = 1.0 / torch.clip(self.rnn.var_embed_x(self.rnn.R_x), 1e-8)
+        eff_std_x = torch.clip(self.rnn.std_embed_x(self.rnn.R_x), 1e-4)
+
         batch_size, dim_x, time_steps = x.shape
+        dim_z = self.dim_z
 
         if sim_s: 
             s_tilde = torch.zeros(batch_size, self.dim_s).to(device=x.device)
@@ -130,7 +132,7 @@ class VAE(nn.Module):
 
         # Get the initial prior mean
         if sim_v:
-            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
             v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
         
         else: #initialise in the affine subspace corresponding to the input
@@ -150,23 +152,36 @@ class VAE(nn.Module):
             B = self.rnn.observation.cast_B(self.rnn.observation.B)
         Obs_bias = self.rnn.observation.Bias.squeeze(-1)
 
-        # Calcaulate the Kalman gain and interpolation alpha
-        Kalman_gain = (
-            eff_var_prior_t0
-            @ B
-            @ torch.linalg.inv(eff_var_x_diag + B.T @ eff_var_prior_t0 @ B)
-        )
-        alpha = Kalman_gain @ B.T
-        one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
+        # Calculate the Kalman gain and interpolation alpha
+        if dim_x < dim_z:
+            Kalman_gain = (
+                eff_var_prior_t0
+                @ B
+                @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_prior_t0 @ B)
+            )
+            alpha = Kalman_gain @ B.T
+            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
 
-        # Posterior Joseph stabilised Covariance
-        var_Q = (
-            one_min_alpha @ eff_var_prior_t0 @ one_min_alpha.T
-            + Kalman_gain @ eff_var_x_diag @ Kalman_gain.T
-        )
+            # Posterior Joseph stabilised Covariance
+            var_Q = (
+                one_min_alpha @ eff_var_prior_t0 @ one_min_alpha.T
+                + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
+            )
+
+        else:  # this is generally faster for low-rank models
+            var_Q = torch.linalg.inv(
+                torch.cholesky_inverse(eff_var_prior_t0_chol)
+                + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
+            )
+            Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
+            alpha = Kalman_gain @ B.T
+            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
+
+        # avoid numerical issues
         var_Q = (
             torch.eye(self.dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
         )
+        
         var_Q_cholesky = torch.linalg.cholesky(var_Q)
         # Posterior Mean
         mean_Q = torch.einsum("zs,BsK->BzK", one_min_alpha, prior_mean) + torch.einsum(
@@ -211,6 +226,34 @@ class VAE(nn.Module):
         time_steps = x.shape[2]
         u = u.unsqueeze(-1)  # account for k
 
+        # precalculate Kalman Gain / Interpolation
+        if dim_x < dim_z:
+            Kalman_gain = (
+                eff_var_prior
+                @ B
+                @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_prior @ B)
+            )
+            alpha = Kalman_gain @ B.T
+            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
+            # Posterior Joseph stabilised Covariance
+            var_Q = (
+                one_min_alpha @ eff_var_prior @ one_min_alpha.T
+                + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
+            )
+        else:
+            var_Q = torch.linalg.inv(
+                torch.cholesky_inverse(eff_var_prior_chol)
+                + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
+            )
+            Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
+            alpha = Kalman_gain @ B.T
+            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
+
+        var_Q = (
+            torch.eye(self.dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
+        )
+        var_Q_cholesky = torch.linalg.cholesky(var_Q)
+        
         # Start the loop through the time steps
         for t in range(1, time_steps):
 
@@ -248,15 +291,6 @@ class VAE(nn.Module):
             else: 
                 s_tilde = s[:, :, t] if s is not None else s
 
-            # Calculate the Kalman gain and interpolation alpha
-            Kalman_gain = (
-                eff_var_prior
-                @ B
-                @ torch.linalg.inv(eff_var_x_diag + B.T @ eff_var_prior @ B)
-            )
-            alpha = Kalman_gain @ B.T
-            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
-
             # Calculate the posterior mean and Joseph stabilised covariance
             if sim_v == True:
                 v_to_X = torch.einsum("xv, bvk -> bxk", self.rnn.transition.Wu, v.squeeze(-2))
@@ -272,16 +306,7 @@ class VAE(nn.Module):
             mean_Q = torch.einsum(
                 "zs,BsK->BzK", one_min_alpha, prior_mean
             ) + torch.einsum("zx,BxK->BzK", Kalman_gain, x_t)
-            var_Q = (
-                one_min_alpha @ eff_var_prior @ one_min_alpha.T
-                + Kalman_gain @ eff_var_x_diag @ Kalman_gain.T
-            )
-            var_Q = (
-                torch.eye(self.dim_z, device=alpha.device) * 1e-8
-                + (var_Q + var_Q.T) / 2
-            )
-            var_Q_cholesky = torch.linalg.cholesky(var_Q)
-
+            
             # Sample from the posterior and calculate likelihood
             Q_dist = torch.distributions.MultivariateNormal(
                 loc=mean_Q.permute(0, 2, 1), scale_tril=var_Q_cholesky

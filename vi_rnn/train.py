@@ -120,10 +120,10 @@ def train_VAE(
         / training_params["n_epochs"]
     )
     print("Learning rate decay factor " + str(gamma))
-    # scheduler = scheduler or torch.optim.lr_scheduler.ExponentialLR(
-    #     optimizer, gamma, last_epoch=-1
-    # )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=training_params["step_size"], gamma=training_params["gamma"])
+    scheduler = scheduler or torch.optim.lr_scheduler.ExponentialLR(
+        optimizer, gamma, last_epoch=-1
+    )
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=training_params["step_size"], gamma=training_params["gamma"])
 
     # loss function
     losses = []

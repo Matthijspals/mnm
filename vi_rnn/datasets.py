@@ -54,7 +54,7 @@ class Basic_dataset(Dataset):
 
 
 class DTTDataset(Dataset):
-    def __init__(self, task_params, data, s_train=None, s_test=None, data_eval=None, seq_periods=None, seq_periods_eval=None):
+    def __init__(self, task_params, data, s_train=None, s_test=None, data_eval=None, seq_periods=None, seq_periods_eval=None, stim=None):
         """
         Basic dataset class for time series data that returns a random trial of length self.dur
         Args:
@@ -79,6 +79,10 @@ class DTTDataset(Dataset):
                 self.s_train = self.s_train.unsqueeze(0)
                 self.s_test = self.s_test.unsqueeze(0)
 
+        self.stim = stim
+        if self.stim is not None: 
+            self.stim = torch.from_numpy(self.stim).to(torch.float32)
+            
         self.n_trials = task_params["n_trials"]
         self.seq_periods = seq_periods
         self.seq_periods_eval = seq_periods_eval
@@ -103,14 +107,16 @@ class DTTDataset(Dataset):
         else:               
             t_start = torch.randint(low=0, high=self.data.shape[0] - self.dur, size=(1,))[0]
         t_end = t_start + self.dur
+        
+        if self.stim is None:
+            stim = torch.zeros(0, self.dur, device=self.data.device)
+        else:
+            stim = self.stim[:, t_start:t_end]    
+        stim = stim.to(device=self.data.device)
         if self.s_train is None:
-            return self.data[t_start:t_end].T, torch.zeros(
-                0, self.dur, device=self.data.device
-            )
+            return self.data[t_start:t_end].T, stim
         else: 
-            return self.data[t_start:t_end].T, torch.zeros(
-                0, self.dur, device=self.data.device
-            ), self.s_train[:, t_start:t_end]
+            return self.data[t_start:t_end].T, stim, self.s_train[:, t_start:t_end]
 
 
 class Oscillations_Cont(Dataset):
