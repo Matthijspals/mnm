@@ -53,8 +53,9 @@ class Basic_dataset(Dataset):
             ), self.s[:, t_start:t_end]
 
 
+
 class DTTDataset(Dataset):
-    def __init__(self, task_params, data, s_train=None, s_test=None, data_eval=None, seq_periods=None, seq_periods_eval=None, stim=None):
+    def __init__(self, task_params, data, device, s_train=None, s_test=None, data_eval=None, seq_periods=None, seq_periods_eval=None, stim_train=None, stim_test=None):
         """
         Basic dataset class for time series data that returns a random trial of length self.dur
         Args:
@@ -79,9 +80,13 @@ class DTTDataset(Dataset):
                 self.s_train = self.s_train.unsqueeze(0)
                 self.s_test = self.s_test.unsqueeze(0)
 
-        self.stim = stim
-        if self.stim is not None: 
-            self.stim = torch.from_numpy(self.stim).to(torch.float32)
+        self.stim_train = stim_train 
+        self.stim_test = stim_test 
+        self.device = device
+        
+        if self.stim_train is not None: 
+            self.stim_train = torch.from_numpy(self.stim_train).to(torch.float32)
+            self.stim_test = torch.from_numpy(self.stim_test).to(torch.float32) 
             
         self.n_trials = task_params["n_trials"]
         self.seq_periods = seq_periods
@@ -108,15 +113,15 @@ class DTTDataset(Dataset):
             t_start = torch.randint(low=0, high=self.data.shape[0] - self.dur, size=(1,))[0]
         t_end = t_start + self.dur
         
-        if self.stim is None:
-            stim = torch.zeros(0, self.dur, device=self.data.device)
+        if self.stim_train is None:
+            stim = torch.zeros(0, self.dur, device=self.device)
         else:
-            stim = self.stim[:, t_start:t_end]    
-        stim = stim.to(device=self.data.device)
+            stim = self.stim_train[:, t_start:t_end]    
+        stim = stim.to(device=self.device)
         if self.s_train is None:
-            return self.data[t_start:t_end].T, stim
+            return self.data[t_start:t_end].T.to(self.device), stim
         else: 
-            return self.data[t_start:t_end].T, stim, self.s_train[:, t_start:t_end]
+            return self.data[t_start:t_end].T.to(self.device), stim, self.s_train[:, t_start:t_end].to(self.device)
 
 
 class Oscillations_Cont(Dataset):

@@ -91,7 +91,6 @@ def train_VAE(
         task, batch_size=training_params["batch_size"], shuffle=True
     )
     dataloader.dataset.data = dataloader.dataset.data.to(device=device)
-    dataloader.dataset.data_eval = dataloader.dataset.data_eval.to(device=device)
     if dataloader.dataset.s_train is not None:
         dataloader.dataset.s_train = dataloader.dataset.s_train.to(device=device)
         dataloader.dataset.s_test = dataloader.dataset.s_test.to(device=device) 
