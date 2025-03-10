@@ -1,4 +1,3 @@
-# Code to test everything is working fine. 
 import os 
 import sys
 import argparse 
@@ -290,13 +289,16 @@ if __name__ == '__main__':
         "t_end_post_trial": 7_849,
         "bin_size": 0.05, 
         "bs": 512,
-        "fr_threshold": 0.5
+        "fr_threshold": 0.5,
+        "epochs": 300,
     }
 
     parser = argparse.ArgumentParser(description='train')
     parser.add_argument('-n', '--neuromodulation', help='Neuromodulation type')
     parser.add_argument('-g', '--gpu', help='GPU')
     parser.add_argument('-d', '--dataset', help='Dataset type')
+    parser.add_argument('-e', '--epochs', help='Number of epochs to train')
+    parser.add_argument('-r', '--rank', help='Rank of network')
 
     args = parser.parse_args() 
 
@@ -305,6 +307,7 @@ if __name__ == '__main__':
         if 'stim' in config["neuromodulation"]: 
             config["neuromodulation"] = config["neuromodulation"].split('_')[0]
             config["sim_v"] = True 
+        if config['neuromodulation'] == 'None': config['neuromodulation'] = None
     if config["neuromodulation"] != "additive": 
         config["sim_s"] = False 
     
@@ -321,6 +324,12 @@ if __name__ == '__main__':
 
     if args.gpu is not None: 
         config["gpu"] = args.gpu 
+
+    if args.epochs:
+        config["epochs"] = args.epochs
+
+    if args.rank:
+        config["rank"] = int(args.rank)
 
     os.environ['CUDA_VISIBLE_DEVICES'] = config["gpu"]
     print(config)
@@ -400,7 +409,7 @@ if __name__ == '__main__':
             "step_size": 1, 
             "gamma": 0.998849,
             "lr_end": 1e-4,
-            "n_epochs": 300,
+            "n_epochs": config["epochs"],
             "grad_norm": 10,
             "eval_epochs": 10,
             "batch_size": config["bs"],
@@ -439,11 +448,15 @@ if __name__ == '__main__':
             "causal": False
         }
         vae = VAE(VAE_params)
+
+        if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim"
+        else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}"
+
         train_VAE(vae, 
             training_params, 
             task, 
             sync_wandb=True, 
             out_dir=config["out_dir"], 
-            fname=f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}")
+            fname=fname)
 
 
