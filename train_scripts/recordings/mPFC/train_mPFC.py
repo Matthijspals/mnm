@@ -216,11 +216,26 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
     stim_arr_train = None 
     bin_size = config["bin_size"]
 
+    if config["dataset"] == "nk340": 
+        # add first few minutes of baseline activity as well since there are only a few minutes of post-trial data samples 
+        t_start_baseline, t_end_baseline = np.where(neuromod_activity > 0)[0][0] * bin_size, trials_df['t'].min() - 5
+        spike_counts_baseline, s_baseline = get_block(spike_counts, neuromod_activity, t_start_baseline, t_end_baseline) 
+        x_train = [spike_counts_baseline]
+        s_train = [s_baseline]
+        stim_arr_train = [np.zeros((9, s_baseline.shape[0]))]
+        seq_periods = [[0, s_baseline.shape[0]]] 
+
     spike_counts_pt_baseline, s_pt_baseline = get_block(spike_counts, neuromod_activity, config["t_start_post_trial"], config["t_end_post_trial"], bin_size)
-    x_train = [spike_counts_pt_baseline]
-    s_train = [s_pt_baseline] 
-    stim_arr_train = [np.zeros((9, s_pt_baseline.shape[0]))]
-    seq_periods = [[0, s_pt_baseline.shape[0]]]
+    if x_train is not None: 
+        x_train.append(spike_counts_pt_baseline) 
+        s_train.append(s_pt_baseline)
+        stim_arr_train.append(np.zeros((0, s_pt_baseline.shape[0])))
+        seq_periods.append([seq_periods[-1][1], seq_periods[-1][1] + s_pt_baseline.shape[0]])
+    else:
+        x_train = [spike_counts_pt_baseline]
+        s_train = [s_pt_baseline] 
+        stim_arr_train = [np.zeros((9, s_pt_baseline.shape[0]))]
+        seq_periods = [[0, s_pt_baseline.shape[0]]]
     # get first 4 white noise blocks 
     white_noise_trial_dur = 6 # 6 seconds
     white_noise_trials_cs = trials_df[trials_df['trialtype'] == 'TONE_2']['cs'].to_list()[0:4] 
