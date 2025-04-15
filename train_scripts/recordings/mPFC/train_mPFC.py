@@ -218,23 +218,29 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
     if config["dataset"] == "nk340": 
         # add first few minutes of baseline activity as well since there are only a few minutes of post-trial data samples 
         t_start_baseline, t_end_baseline = np.where(neuromod_activity > 0)[0][0] * bin_size, trials_df['t'].min() - 5
-        spike_counts_baseline, s_baseline = get_block(spike_counts, neuromod_activity, t_start_baseline, t_end_baseline) 
+        spike_counts_baseline, s_baseline = get_block(spike_counts, neuromod_activity, t_start_baseline, t_end_baseline, bin_size) 
         x_train = [spike_counts_baseline]
         s_train = [s_baseline]
         stim_arr_train = [np.zeros((9, s_baseline.shape[0]))]
         seq_periods = [[0, s_baseline.shape[0]]] 
-
+        print(f'Baseline activity shape: {spike_counts_baseline.shape}')
+    
     spike_counts_pt_baseline, s_pt_baseline = get_block(spike_counts, neuromod_activity, config["t_start_post_trial"], config["t_end_post_trial"], bin_size)
+    # define normalization parameters
+    s_min, s_max = s_pt_baseline.min(), s_pt_baseline.max() 
+    
     if x_train is not None: 
         x_train.append(spike_counts_pt_baseline) 
         s_train.append(s_pt_baseline)
-        stim_arr_train.append(np.zeros((0, s_pt_baseline.shape[0])))
+        stim_arr_train.append(np.zeros((9, s_pt_baseline.shape[0])))
         seq_periods.append([seq_periods[-1][1], seq_periods[-1][1] + s_pt_baseline.shape[0]])
+        print(f'Post trial baseline activity shape: {spike_counts_pt_baseline.shape}')
     else:
         x_train = [spike_counts_pt_baseline]
         s_train = [s_pt_baseline] 
         stim_arr_train = [np.zeros((9, s_pt_baseline.shape[0]))]
         seq_periods = [[0, s_pt_baseline.shape[0]]]
+    
     # get first 4 white noise blocks 
     white_noise_trial_dur = 6 # 6 seconds
     white_noise_trials_cs = trials_df[trials_df['trialtype'] == 'TONE_2']['cs'].to_list()[0:4] 
@@ -242,6 +248,8 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
 
     for trial_idx, trial in enumerate(white_noise_trials_cs):
         spike_counts_white_noise, s_white_noise = get_block(spike_counts, neuromod_activity, trial - 15, trial + white_noise_trial_dur + 15, bin_size)
+        s_min = np.minimum(s_min, s_white_noise.min())
+        s_max = np.maximum(s_max, s_white_noise.max())
         # get stimulus 
         stim_white_noise_trial = get_white_noise_trial(trial, bin_size) 
         x_train.append(spike_counts_white_noise)
@@ -259,6 +267,9 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
         us = airpuff_trial_us[trial_idx]
         stim_airpuff = get_airpuff_trial(trial, us, bin_size) 
 
+        s_min = np.minimum(s_min, s_airpuff.min())
+        s_max = np.maximum(s_max, s_airpuff.max())
+        
         x_train.append(spike_counts_airpuff)
         s_train.append(s_airpuff) 
         stim_arr_train.append(np.hstack([zero_arr, stim_airpuff, zero_arr])) 
@@ -269,6 +280,8 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
         # get stimuli 
         stim_arr_rewards, trial_blocks, reward_trial_start = get_reward_block(i, bin_size)
         spike_counts_reward, s_reward = get_block(spike_counts, neuromod_activity,reward_trial_start - 15, reward_trial_start + 215 + 15, bin_size)
+        s_min = np.minimum(s_min, s_airpuff.min())
+        s_max = np.maximum(s_max, s_airpuff.max())
         
         x_train.append(spike_counts_reward)
         s_train.append(s_reward)
@@ -277,10 +290,16 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
 
     x_train = np.hstack(x_train)
     s_train = np.hstack(s_train) 
+    print(s_pt_baseline.shape, s_train.shape)
+    print(f's_min = {s_min}, s_max = {s_max}')
     stim_arr_train = np.hstack(stim_arr_train) 
 
     # normalize neuromdoulators 
-    s_train = (s_train - s_train.min()) / (s_train.max() - s_train.min())
+    s_train = (s_train - s_min) / (s_max - s_min)
+    if config["shuffle"]:
+         print('Randomly shuffling Neuromodulators')
+         np.random.shuffle(s_train)
+    print(f'Shape of training samples: {x_train.shape}, {s_train.shape}')
     return x_train, s_train, stim_arr_train, seq_periods
 
 if __name__ == '__main__':
@@ -290,7 +309,7 @@ if __name__ == '__main__':
         "deconvolve": False, 
         "convolve_spikes": True, 
         "neuromodulation": "additive",
-        "dataset": "nk341",
+        "dataset": "nk341_mPFC",
         "normalize_neuromod": True, 
         "sim_s": True, 
         "sim_v": False, 
@@ -306,6 +325,7 @@ if __name__ == '__main__':
         "bs": 512,
         "fr_threshold": 0.5,
         "epochs": 300,
+        "shuffle": False
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -314,7 +334,9 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--dataset', help='Dataset type')
     parser.add_argument('-e', '--epochs', help='Number of epochs to train')
     parser.add_argument('-r', '--rank', help='Rank of network')
-
+    parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control')
+    parser.add_argument('-k', '--particles', help='Number of particles')
+    
     args = parser.parse_args() 
 
     if args.neuromodulation is not None: 
@@ -325,28 +347,36 @@ if __name__ == '__main__':
         if config['neuromodulation'] == 'None': config['neuromodulation'] = None
     if config["neuromodulation"] != "additive": 
         config["sim_s"] = False 
-    
     if args.dataset is not None: 
         config["dataset"] = args.dataset 
-    if config["dataset"] == "nk340": 
+    if config["dataset"] == "nk340_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk340_mPFC/"
         config["t_start_post_trial"] = 4700
         config["t_end_post_trial"] = 5150
-    elif config["dataset"] == "nk339": 
+    elif config["dataset"] == "nk339_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk339_mPFC/"
         config["t_start_post_trial"] = 4992
         config["t_end_post_trial"] = 5622
+    elif config["dataset"] == "nk341_BLA":
+        config["data_dir"] = "../../../data/recordings/nk341_BLA/"
+        config["t_start_post_trial"] = 4848
+        config["t_end_post_trial"] = 5848
 
     if args.gpu is not None: 
         config["gpu"] = args.gpu 
 
     if args.epochs:
-        config["epochs"] = args.epochs
+        config["epochs"] = int(args.epochs)
 
     if args.rank:
         config["rank"] = int(args.rank)
 
+    if args.particles:
+        config["k"] = int(args.particles)
+
     os.environ['CUDA_VISIBLE_DEVICES'] = config["gpu"]
+    if args.shuffle: 
+        config["shuffle"] = int(args.shuffle)
     print(config)
 
     # load data 
@@ -358,6 +388,7 @@ if __name__ == '__main__':
     # train models 
     seeds = np.arange(0, 10)
     for seed in seeds:
+        print(f'Training seed: {seed}')
         torch.manual_seed(seed)
         np.random.seed(seed)
         
@@ -435,7 +466,7 @@ if __name__ == '__main__':
             "sim_latent_noise": 1,
             "opt_eps": 1e-8,
             "sim_obs_noise": 0,
-            "k": 64,
+            "k": config["k"],
             "sim_v": config["sim_v"],
             "sim_s": config["sim_s"],
             "loss_f": "opt_VGTF",
@@ -467,6 +498,8 @@ if __name__ == '__main__':
         if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim"
         else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}"
 
+        if config["k"] != 64: fname += f"_k_{config['k']}" 
+            
         train_VAE(vae, 
             training_params, 
             task, 

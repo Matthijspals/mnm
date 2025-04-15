@@ -1,21 +1,25 @@
 from itertools import combinations, chain
 import numpy as np
-
+from tqdm import tqdm
 
 def powerset(iterable):
     s = list(iterable)
     return chain.from_iterable(combinations(s, r) for r in range(len(s) + 1))
 
 
-def find_fixed_points_analytic(a, V, U, hz, h, d=1):
+def find_fixed_points_analytic(a, V, U, hz, h, d=1, neuromodulation=None, A=None, s=None, Wu=None, u=None):
     """
     Find fixed points of the model
     Args:
         a: numpy array of shape (R,) decay
         V: numpy array of shape (R,N) scaled left singular vectors
         U: numpy array of shape (N,R) right singular vectors
-        hz: numpy array of shape (R,) latent bias (assumed to be substracted!)
+        hz: numpy array of shape (R,) latent bias (assumed to be subtracted!)
         h: numpy array of shape (N,) neuron bias
+        d: number of bases of the transfer function
+        neuromodulation: string 
+        A: numpy array of shape (N,n_s)
+        s: numpy array of shape (n_s,)
     Returns:
         D_list: numpy array of shape (n_Ds,N) containing all subspaces
         D_inds: list of indices of subspaces in D_list that are fixed points
@@ -45,13 +49,24 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1):
     print(len(list(powerset(range(R)))))
     D_list = np.zeros((n_Ds_initial, N), dtype="uint8")
     it = 0
-    for inds in intersect_inds:
+    
+    Wu_new = None
+    if Wu is not None: 
+        Wu_new = np.concatenate([Wu, Wu], axis=0)
+        
+    for inds in tqdm(intersect_inds):
         b_hat = h[inds]
         U_hat = U[inds]
         n_inverses += 1
-        z = np.linalg.solve(U_hat, b_hat)
+        try:
+            z = np.linalg.solve(U_hat, b_hat)
+        except:
+            continue
         # Find all subspaces bordering to this intersection
-        x = U @ z - h
+        if Wu_new is not None:
+            x = U @ z - h + Wu_new @ u
+        else:        
+            x = U @ z - h
         D_init = np.array(x > 0).astype("uint8")
         D_init[inds] = 0
         D_list[it] = D_init
@@ -70,14 +85,25 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1):
     # Finally solve for fixed points
     z_list = []
     D_inds = []
+    
     for D_ind, D_init in enumerate(D_list):
-
-        A = -np.eye(R) + np.diag(a) + V @ np.diag(D_init) @ U
-        b = V @ np.diag(D_init) @ h + hz
-        z_hat = np.linalg.solve(A, b)
+        if neuromodulation == 'postsynaptic': 
+            W = np.eye(A.shape[0]) + np.diag(A @ s) 
+            dg = np.diagonal(W)
+            W_new = np.diag(np.concatenate([dg, dg]))
+            Y = -np.eye(R) + np.diag(a) + V @ W_new @ np.diag(D_init) @ U
+            if Wu_new is not None:
+                b = V @ W_new @ (np.diag(D_init) @ h - np.diag(D_init) @ Wu_new @ u) + hz
+            else:
+                b = V @ W_new @ np.diag(D_init) @ h + hz
+        else:
+            Y = -np.eye(R) + np.diag(a) + V @ np.diag(D_init) @ U
+            b = V @ np.diag(D_init) @ h + hz
+        z_hat = np.linalg.solve(Y, b)
         n_inverses += 1
 
-        x_hat = U @ z_hat - h
+        if Wu_new is not None:
+            x_hat = U @ z_hat - h + Wu_new @ u
         if np.allclose(D_init, np.array(x_hat > 0).astype("uint8")):
             print("Found a fixed point")
             print(z_hat)
