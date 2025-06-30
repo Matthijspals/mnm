@@ -32,7 +32,7 @@ class LRRNN(nn.Module):
 
         self.params = params
         self.normal = torch.distributions.Normal(0, 1)
-
+        print(self.d_N, self.d_x)
         # Initialise noise
         # ------
 
@@ -442,7 +442,7 @@ class Observation(nn.Module):
         super(Observation, self).__init__()
         self.dz = dz
         self.dx = dx
-
+        print(self.dx)
         if identity_readout:
             # B = torch.zeros(self.dx, self.dx)
             # B[range(self.dx), range(self.dx)] = 1

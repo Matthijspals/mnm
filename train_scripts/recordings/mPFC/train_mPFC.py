@@ -11,7 +11,8 @@ import matplotlib as mpl
 from torch.utils.data import DataLoader, Dataset
 
 from vi_rnn.vae import VAE
-from vi_rnn.train import train_VAE 
+from vi_rnn.train import train_VAE
+from vi_rnn.load_data import *
 from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.saving import save_model, load_model
@@ -214,32 +215,15 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
     s_train = None 
     stim_arr_train = None 
     bin_size = config["bin_size"]
-
-    if config["dataset"] == "nk340": 
-        # add first few minutes of baseline activity as well since there are only a few minutes of post-trial data samples 
-        t_start_baseline, t_end_baseline = np.where(neuromod_activity > 0)[0][0] * bin_size, trials_df['t'].min() - 5
-        spike_counts_baseline, s_baseline = get_block(spike_counts, neuromod_activity, t_start_baseline, t_end_baseline, bin_size) 
-        x_train = [spike_counts_baseline]
-        s_train = [s_baseline]
-        stim_arr_train = [np.zeros((9, s_baseline.shape[0]))]
-        seq_periods = [[0, s_baseline.shape[0]]] 
-        print(f'Baseline activity shape: {spike_counts_baseline.shape}')
     
-    spike_counts_pt_baseline, s_pt_baseline = get_block(spike_counts, neuromod_activity, config["t_start_post_trial"], config["t_end_post_trial"], bin_size)
+    spike_counts_pt_baseline, s_pt_baseline = get_block(spike_counts, neuromod_activity, config["t_start_post_trial_train"], config["t_end_post_trial_train"], bin_size)
     # define normalization parameters
     s_min, s_max = s_pt_baseline.min(), s_pt_baseline.max() 
-    
-    if x_train is not None: 
-        x_train.append(spike_counts_pt_baseline) 
-        s_train.append(s_pt_baseline)
-        stim_arr_train.append(np.zeros((9, s_pt_baseline.shape[0])))
-        seq_periods.append([seq_periods[-1][1], seq_periods[-1][1] + s_pt_baseline.shape[0]])
-        print(f'Post trial baseline activity shape: {spike_counts_pt_baseline.shape}')
-    else:
-        x_train = [spike_counts_pt_baseline]
-        s_train = [s_pt_baseline] 
-        stim_arr_train = [np.zeros((9, s_pt_baseline.shape[0]))]
-        seq_periods = [[0, s_pt_baseline.shape[0]]]
+
+    x_train = [spike_counts_pt_baseline]
+    s_train = [s_pt_baseline] 
+    stim_arr_train = [np.zeros((9, s_pt_baseline.shape[0]))]
+    seq_periods = [[0, s_pt_baseline.shape[0]]]
     
     # get first 4 white noise blocks 
     white_noise_trial_dur = 6 # 6 seconds
@@ -317,15 +301,12 @@ if __name__ == '__main__':
         "sampling_rate": 30_000, 
         "data_dir": "../../../data/recordings/nk341_mPFC/",
         "out_dir": "../../../models/dtt/",
-        "t_start_baseline": 10,
-        "t_end_baseline": 600,
-        "t_start_post_trial": 6_699,
-        "t_end_post_trial": 7_849,
         "bin_size": 0.05, 
         "bs": 512,
         "fr_threshold": 0.5,
         "epochs": 300,
-        "shuffle": False
+        "shuffle": False,
+        "k": 64
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -336,6 +317,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rank', help='Rank of network')
     parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control')
     parser.add_argument('-k', '--particles', help='Number of particles')
+    parser.add_argument('-t', '--stimuli', help='Add stimuli')
     
     args = parser.parse_args() 
 
@@ -344,23 +326,26 @@ if __name__ == '__main__':
         if 'stim' in config["neuromodulation"]: 
             config["neuromodulation"] = config["neuromodulation"].split('_')[0]
             config["sim_v"] = True 
+        if args.stimuli is not None: 
+            config["sim_v"] = bool(args.stimuli)
         if config['neuromodulation'] == 'None': config['neuromodulation'] = None
     if config["neuromodulation"] != "additive": 
         config["sim_s"] = False 
     if args.dataset is not None: 
         config["dataset"] = args.dataset 
+        
     if config["dataset"] == "nk340_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk340_mPFC/"
-        config["t_start_post_trial"] = 4700
-        config["t_end_post_trial"] = 5150
+    #     config["t_start_post_trial"] = 4700
+    #     config["t_end_post_trial"] = 5150
     elif config["dataset"] == "nk339_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk339_mPFC/"
-        config["t_start_post_trial"] = 4992
-        config["t_end_post_trial"] = 5622
+    #     config["t_start_post_trial"] = 4992
+    #     config["t_end_post_trial"] = 5622
     elif config["dataset"] == "nk341_BLA":
         config["data_dir"] = "../../../data/recordings/nk341_BLA/"
-        config["t_start_post_trial"] = 4848
-        config["t_end_post_trial"] = 5848
+    #     config["t_start_post_trial"] = 4848
+    #     config["t_end_post_trial"] = 5848
 
     if args.gpu is not None: 
         config["gpu"] = args.gpu 
@@ -382,6 +367,20 @@ if __name__ == '__main__':
     # load data 
     spikes, spike_counts, neuromod_activity, trials_df = load_data(config) 
 
+    # split dataset into train and test samples based on amount of data available 
+    data_dur = spike_counts.shape[1] * config['bin_size']
+    # first find when the last trial is. Last trials is always odor, which lasts 120 seconds 
+    last_trial_timestamp = trials_df['cs'].max() + 120
+    baseline_dur = data_dur - last_trial_timestamp
+    # split into 75% train and 25% test samples. The tail end of the data will be used for training
+    config['t_start_post_trial_train'] = int(data_dur - 0.75 * baseline_dur)
+    config['t_end_post_trial_train'] = int(data_dur) 
+
+    print(f'Data duration: {data_dur} seconds')
+    print(f'Baseline data duration: {baseline_dur} seconds')
+    print(f'Baseline training samples: {baseline_dur * 0.75} seconds')
+    print(f'Baseline test samples: {baseline_dur * 0.25} seconds')
+    
     # prepare dataset 
     x_train, s_train, stim_arr_train, seq_periods = prepare_dataset(spike_counts, neuromod_activity, trials_df, config)
 
@@ -423,7 +422,7 @@ if __name__ == '__main__':
             "train_noise_z": True,
             "train_noise_z_t0": True,
             "init_noise_z": 0.1,
-            "init_noise_z_t0": 1,
+            "init_noise_z_t0": 0.1,
             "init_noise_x": 0.1,
             "scalar_noise_z": "Cov",
             "scalar_noise_x": False,
@@ -497,8 +496,6 @@ if __name__ == '__main__':
 
         if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim"
         else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}"
-
-        if config["k"] != 64: fname += f"_k_{config['k']}" 
             
         train_VAE(vae, 
             training_params, 
