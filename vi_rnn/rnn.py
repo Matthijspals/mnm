@@ -271,7 +271,7 @@ class LRRNN(nn.Module):
             s (torch.tensor); n_trials x dim_s x time_steps): neuromodulator states 
         Returns:
             Z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
-        """
+        """ 
         with torch.no_grad():
             Z = []
             V = []
