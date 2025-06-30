@@ -278,7 +278,7 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config):
     print(f's_min = {s_min}, s_max = {s_max}')
     stim_arr_train = np.hstack(stim_arr_train) 
 
-    # normalize neuromdoulators 
+    # normalize neuromodulators 
     s_train = (s_train - s_min) / (s_max - s_min)
     if config["shuffle"]:
          print('Randomly shuffling Neuromodulators')
@@ -318,7 +318,8 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control')
     parser.add_argument('-k', '--particles', help='Number of particles')
     parser.add_argument('-t', '--stimuli', help='Add stimuli')
-    
+    parser.add_argument('-a', '--activation', help='Activation function (relu, sigmoid, tanh)')
+
     args = parser.parse_args() 
 
     if args.neuromodulation is not None: 
@@ -358,6 +359,9 @@ if __name__ == '__main__':
 
     if args.particles:
         config["k"] = int(args.particles)
+
+    if args.activation is not None:
+        config["activation"] = args.activation
 
     os.environ['CUDA_VISIBLE_DEVICES'] = config["gpu"]
     if args.shuffle: 
@@ -428,7 +432,7 @@ if __name__ == '__main__':
             "scalar_noise_x": False,
             "scalar_noise_z_t0": "Cov",
             "identity_readout": True,
-            "activation": "relu",
+            "activation": config["activation"],
             "exp_par": True,
             "shared_tau": 0.9,
             "readout_rates": "currents",
@@ -494,8 +498,8 @@ if __name__ == '__main__':
         }
         vae = VAE(VAE_params)
 
-        if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim"
-        else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}"
+        if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim_{config['activation']}"
+        else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_{config['activation']}"
             
         train_VAE(vae, 
             training_params, 
