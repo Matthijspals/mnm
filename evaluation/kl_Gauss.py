@@ -73,9 +73,9 @@ def calc_kl_mc(mu_inf, mu_gen, scale):
     return kl_mc, outlier_ratio
 
 
-def calc_kl_from_data(mu_gen, data_true):
+def calc_kl_from_data(mu_gen, data_true, num_samples=1000):
     """Calculate the KL divergence between two datasets after KDE with Gaussian Kernel"""
-    time_steps = min(len(data_true), 1000)
+    time_steps = min(len(data_true), num_samples)
     mu_inf = data_true[:time_steps]
     mu_gen = mu_gen[:time_steps]
     scaling = 1.0  # standard deviation of the Gaussian kernel

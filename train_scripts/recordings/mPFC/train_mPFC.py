@@ -293,6 +293,7 @@ if __name__ == '__main__':
         "deconvolve": False, 
         "convolve_spikes": True, 
         "neuromodulation": "additive",
+	"activation": "clipped_relu",
         "dataset": "nk341_mPFC",
         "normalize_neuromod": True, 
         "sim_s": True, 
@@ -306,7 +307,7 @@ if __name__ == '__main__':
         "fr_threshold": 0.5,
         "epochs": 300,
         "shuffle": False,
-        "k": 64
+        "k": 64,
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -319,6 +320,7 @@ if __name__ == '__main__':
     parser.add_argument('-k', '--particles', help='Number of particles')
     parser.add_argument('-t', '--stimuli', help='Add stimuli')
     parser.add_argument('-a', '--activation', help='Activation function (relu, sigmoid, tanh)')
+    parser.add_argument('-b', '--seed', help='Seed')
 
     args = parser.parse_args() 
 
@@ -334,20 +336,13 @@ if __name__ == '__main__':
         config["sim_s"] = False 
     if args.dataset is not None: 
         config["dataset"] = args.dataset 
-        
     if config["dataset"] == "nk340_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk340_mPFC/"
-    #     config["t_start_post_trial"] = 4700
-    #     config["t_end_post_trial"] = 5150
     elif config["dataset"] == "nk339_mPFC": 
         config["data_dir"] = "../../../data/recordings/nk339_mPFC/"
-    #     config["t_start_post_trial"] = 4992
-    #     config["t_end_post_trial"] = 5622
     elif config["dataset"] == "nk341_BLA":
         config["data_dir"] = "../../../data/recordings/nk341_BLA/"
-    #     config["t_start_post_trial"] = 4848
-    #     config["t_end_post_trial"] = 5848
-
+    
     if args.gpu is not None: 
         config["gpu"] = args.gpu 
 
@@ -363,6 +358,8 @@ if __name__ == '__main__':
     if args.activation is not None:
         config["activation"] = args.activation
 
+    if args.seed is not None:
+        config["seed"] = int(args.seed)
     os.environ['CUDA_VISIBLE_DEVICES'] = config["gpu"]
     if args.shuffle: 
         config["shuffle"] = int(args.shuffle)
@@ -389,7 +386,10 @@ if __name__ == '__main__':
     x_train, s_train, stim_arr_train, seq_periods = prepare_dataset(spike_counts, neuromod_activity, trials_df, config)
 
     # train models 
-    seeds = np.arange(0, 10)
+    if config["seed"] is not None:
+        seeds = [config["seed"]]
+    else:
+        seeds = np.arange(0, 10)
     for seed in seeds:
         print(f'Training seed: {seed}')
         torch.manual_seed(seed)
@@ -498,13 +498,13 @@ if __name__ == '__main__':
         }
         vae = VAE(VAE_params)
 
-        if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim_{config['activation']}"
-        else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_{config['activation']}"
+        if config['sim_v']: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}_stim"
+        else: fname = f"{config['dataset']}_{config['neuromodulation']}_rank_{dim_z}_seed_{seed}"
             
         train_VAE(vae, 
             training_params, 
             task, 
-            sync_wandb=True, 
+            sync_wandb=False, 
             out_dir=config["out_dir"], 
             fname=fname)
 

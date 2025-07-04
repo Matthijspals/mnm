@@ -1,3 +1,5 @@
+import os 
+
 import torch
 import numpy as np
 from torch.utils.data import Dataset
@@ -248,40 +250,4 @@ def get_orth_proj_latents(vae):
         u, s, v = torch.linalg.svd(J)
         projection_matrix = u[:, : vae.dim_z].T @ m_or
     return projection_matrix
-
-
-def bin_spike_train(spike_times, t_start, t_end, bin_size):
-    """
-    Bin the spike train given spike times 
-
-    Args:
-        spike_times (numpy.ndarray; num_spikes x 1): Times (in ms) in which spikes occur
-        t_start (int): start time
-        t_end (int): end time
-        bin_size (int): bin width in ms
-
-    Returns: 
-        binned_counts (numpy.ndarray; num_bins x 1): Number of spikes in each bin
-        bin_edges (numpy.ndarray; num_bins x 1): Time edges of the bins   
-    """
-    # exclude spikes after t_end 
-    spike_times = spike_times[spike_times <= t_end]
-    bins = np.arange(t_start, t_end + bin_size, bin_size)
-    binned_counts, bin_edges = np.histogram(spike_times, bins=bins)
-    return binned_counts, bin_edges 
-
-def spike_times_to_binary(spike_times, t_start, t_end):
-    """
-    Convert from neuron spike times to a binary array for each time point
-
-    Args:
-        spike_times (list[numpy.ndarray]; num_neurons x num_spikes)
-        t_start (int): start time 
-        t_end (int): end time 
-    """
-    bin_arr = np.zeros((len(spike_times), (t_end - t_start + 1)))
-    for i in range(len(spike_times)):
-        spike_times[i] = spike_times[i][spike_times[i] <= t_end]
-        bin_arr[i, int(spike_times[i])] = 1.0
-    return bin_arr
 
