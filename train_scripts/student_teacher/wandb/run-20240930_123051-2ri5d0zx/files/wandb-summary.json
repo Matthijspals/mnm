@@ -1,1 +1,0 @@
-{"loss": Infinity, "ll": -Infinity, "likelihood_data": Infinity, "likelihood_latent": Infinity, "entropy": 7.944851875305176, "alpha": 0.2376798838376999, "noise_z": NaN, "noise_x": NaN, "noise_e": 0.10000000894069672, "lr": 0.001, "_timestamp": 1727692253.7153013, "_runtime": 2.4845573902130127, "_step": 0}

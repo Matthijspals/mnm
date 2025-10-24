@@ -33,13 +33,14 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1, neuromodulation=None, A=None
 
     # First solve for all intersection of hyperplanes
     intersect_inds = np.array(list(combinations(np.arange(N), R)))
+    print(f'Intersection indices shape: {intersect_inds.shape}')
     print(len(intersect_inds))
 
     par_inds = []
     if d == 2:
         ni = N // 2
         for i, el in enumerate(intersect_inds):
-            if el[0] == el[1] + ni or el[1] == el[0] + ni:
+            if el.shape[-1] > 1 and (el[0] == el[1] + ni or el[1] == el[0] + ni):
                 par_inds.append(i)
         intersect_inds = np.delete(intersect_inds, par_inds, axis=0)
         print("removed parallel lines")
@@ -50,9 +51,14 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1, neuromodulation=None, A=None
     D_list = np.zeros((n_Ds_initial, N), dtype="uint8")
     it = 0
     
-    Wu_new = None
+    Wu_new = None # input weights
     if Wu is not None: 
         Wu_new = np.concatenate([Wu, Wu], axis=0)
+
+    W_new = None # neuromodulatory weights
+    if neuromodulation == 'additive':
+        W = A @ s 
+        W_new = np.concatenate([W, W], axis=0)
         
     for inds in tqdm(intersect_inds):
         b_hat = h[inds]
@@ -63,8 +69,12 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1, neuromodulation=None, A=None
         except:
             continue
         # Find all subspaces bordering to this intersection
-        if Wu_new is not None:
-            x = U @ z - h + Wu_new @ u
+        if Wu_new is not None and W_new is not None:
+            x = U @ z - h + Wu_new @ u + W_new 
+        elif W_new is not None: 
+            x = U @ z - h + W_new 
+        elif Wu_new is not None: 
+            x = U @ z - h + Wu_new @ u 
         else:        
             x = U @ z - h
         D_init = np.array(x > 0).astype("uint8")
@@ -86,24 +96,47 @@ def find_fixed_points_analytic(a, V, U, hz, h, d=1, neuromodulation=None, A=None
     z_list = []
     D_inds = []
     
-    for D_ind, D_init in enumerate(D_list):
-        if neuromodulation == 'postsynaptic': 
+    for D_ind, D_init in enumerate(D_list):  
+        if neuromodulation == 'postsynaptic' or neuromodulation == 'presynaptic':
             W = np.eye(A.shape[0]) + np.diag(A @ s) 
             dg = np.diagonal(W)
-            W_new = np.diag(np.concatenate([dg, dg]))
+            W_new = np.diag(np.concatenate([dg, dg])) 
+
+        if neuromodulation == 'postsynaptic':             
             Y = -np.eye(R) + np.diag(a) + V @ W_new @ np.diag(D_init) @ U
             if Wu_new is not None:
                 b = V @ W_new @ (np.diag(D_init) @ h - np.diag(D_init) @ Wu_new @ u) + hz
             else:
                 b = V @ W_new @ np.diag(D_init) @ h + hz
+
+        elif neuromodulation == 'presynaptic':
+            Y = -np.eye(R) + np.diag(a) + V @ np.diag(D_init) @ W_new @ U
+            b = V @ np.diag(D_init) @ h + hz
+
+        elif neuromodulation == 'rank':
+            W = np.eye(A.shape[0]) + np.diag(A @ s)
+            Y = -np.eye(R) + np.diag(a) + W @ V @ np.diag(D_init) @ U
+            b = W @ V @ np.diag(D_init) @ h + hz 
+            
+        elif neuromodulation == 'additive':
+            W = A @ s 
+            W_new = np.concatenate([W, W], axis=0)
+            Y = -np.eye(R) + np.diag(a) + V @ np.diag(D_init) @ U
+            b = V @ (np.diag(D_init) @ h - np.diag(D_init) @ W_new) + hz
+            
         else:
             Y = -np.eye(R) + np.diag(a) + V @ np.diag(D_init) @ U
             b = V @ np.diag(D_init) @ h + hz
         z_hat = np.linalg.solve(Y, b)
         n_inverses += 1
 
-        if Wu_new is not None:
-            x_hat = U @ z_hat - h + Wu_new @ u
+        if Wu_new is not None and neuromodulation == 'additive':
+            x_hat = U @ z_hat - h + Wu_new @ u + W_new
+        elif Wu_new is not None:
+            x_hat = U @ z_hat - h + Wu_new @ u 
+        else: 
+            x_hat = U @ z_hat - h
+
         if np.allclose(D_init, np.array(x_hat > 0).astype("uint8")):
             print("Found a fixed point")
             print(z_hat)

@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 # ADAPTED FROM:
 # https://github.com/DurstewitzLab/ChaosRNN

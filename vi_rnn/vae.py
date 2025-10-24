@@ -48,6 +48,7 @@ class VAE(nn.Module):
                 self.dim_N,
                 self.dim_s,
                 vae_params["rnn_params"],
+                vae_params["cell_types"]
             )
         else:
             print("WARNING: prior does not exist")
@@ -111,6 +112,8 @@ class VAE(nn.Module):
         ll_qzs = []
         Qzs = []
         alphas = []
+        ess = []
+        unique_particles = []
 
         #project and clamp the variances
         eff_var_prior = self.rnn.full_cov_embed(self.rnn.R_z)
@@ -182,7 +185,8 @@ class VAE(nn.Module):
             torch.eye(self.dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
         )
         
-        var_Q_cholesky = torch.linalg.cholesky(var_Q)
+        var_Q_cholesky = torch.linalg.cholesky(var_Q) 
+        
         # Posterior Mean
         mean_Q = torch.einsum("zs,BsK->BzK", one_min_alpha, prior_mean) + torch.einsum(
             "zx,BxK->BzK", Kalman_gain, x[:, :, 0] - Obs_bias
@@ -216,43 +220,22 @@ class VAE(nn.Module):
         ll_xsum = torch.logsumexp(ll_x.detach(), axis=-1) - np.log(k)
         ll_pzsum = torch.logsumexp(ll_pz.detach(), axis=-1) - np.log(k)
         ll_qzsum = torch.logsumexp(ll_qz.detach(), axis=-1) - np.log(k)
-        log_ws.append(torch.logsumexp(log_w, axis=-1) - np.log(k))
+        normalized_weights = torch.logsumexp(log_w, axis=-1) - np.log(k)
+        log_ws.append(normalized_weights)
         log_ll.append(torch.logsumexp(log_w.detach(), axis=-1) - np.log(k))
         Qzs.append(Qz)
         ll_xs.append(ll_xsum)
         ll_pzs.append(ll_pzsum)
         ll_qzs.append(ll_qzsum)
-
+        
         time_steps = x.shape[2]
         u = u.unsqueeze(-1)  # account for k
 
-        # precalculate Kalman Gain / Interpolation
-        if dim_x < dim_z:
-            Kalman_gain = (
-                eff_var_prior
-                @ B
-                @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_prior @ B)
-            )
-            alpha = Kalman_gain @ B.T
-            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
-            # Posterior Joseph stabilised Covariance
-            var_Q = (
-                one_min_alpha @ eff_var_prior @ one_min_alpha.T
-                + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
-            )
-        else:
-            var_Q = torch.linalg.inv(
-                torch.cholesky_inverse(eff_var_prior_chol)
-                + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
-            )
-            Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
-            alpha = Kalman_gain @ B.T
-            one_min_alpha = torch.eye(self.dim_z, device=alpha.device) - alpha
-
-        var_Q = (
-            torch.eye(self.dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
-        )
-        var_Q_cholesky = torch.linalg.cholesky(var_Q)
+        # log the determinant of the posterior covariance 
+        # print(eff_var_prior_chol.shape, eff_var_x.shape)
+        det_prior = torch.diagonal(eff_var_prior_chol).log().sum().item()
+        det_obs = eff_var_x.log().sum().item()
+        det_posterior = torch.diagonal(var_Q_cholesky).log().sum().item()
         
         # Start the loop through the time steps
         for t in range(1, time_steps):
@@ -270,6 +253,11 @@ class VAE(nn.Module):
                 print("WARNING: resample does not exist")
                 print("use, one of: multinomial, systematic, none")
 
+            # count number of unique particles and average across batches
+            sorted_idx = indices.sort(dim=1).values         
+            unique_per_batch = (sorted_idx[:, 1:] != sorted_idx[:, :-1]).sum(dim=1) + 1  # (B,)
+            avg_unique = unique_per_batch.float().mean().item()      
+            
             # Get the prior mean
             if s is not None:
                 prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
@@ -333,7 +321,7 @@ class VAE(nn.Module):
             )
             ll_x = x_dist.log_prob(x[:, :, t].permute(0, 2, 1)).sum(axis=-1)
 
-            # Calculate the log weights
+            # Calcula[te the log weights
             log_w = ll_x + ll_pz - ll_qz
 
             # Store some quantities
@@ -347,7 +335,8 @@ class VAE(nn.Module):
             ll_pzs.append(ll_pzsum)
             ll_qzs.append(ll_qzsum)
             alphas.append(alpha)
-
+            unique_particles.append(avg_unique)
+            
         # Make tensors from lists
         log_ws = torch.stack(log_ws)
         log_ll = torch.stack(log_ll)
@@ -355,7 +344,7 @@ class VAE(nn.Module):
         log_pzs = torch.stack(ll_pzs)
         log_qzs = torch.stack(ll_qzs)
         alphas = torch.stack(alphas)
-
+        
         # Average over time steps
         log_likelihood = torch.sum(log_ll, axis=0)
         Loss = torch.sum(log_ws, axis=0)
@@ -379,6 +368,10 @@ class VAE(nn.Module):
             -log_qzs,
             log_likelihood,
             alphas,
+            unique_particles,
+            det_prior,
+            det_obs,
+            det_posterior
         )
 
     def forward_VGTF(
@@ -525,7 +518,7 @@ class VAE(nn.Module):
         Qzs.append(Qz)
 
         u = u.unsqueeze(-1)  # add particle dimension
-
+        
         # Loop through the time steps
         for t in range(1, time_steps):
 
@@ -541,7 +534,7 @@ class VAE(nn.Module):
             else:
                 print("WARNING: resample does not exist")
                 print("use, one of: multinomial, systematic, none")
-
+            
             # Get the prior mean
             if s is not None:
                 prior_mean = self.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
@@ -601,6 +594,7 @@ class VAE(nn.Module):
             ll_qzs.append(torch.logsumexp(ll_qz.detach(), axis=-1) - np.log(k))
             log_ws.append(torch.logsumexp(log_w, axis=-1) - np.log(k))
             Qzs.append(Qz)
+            unique_particles.append(num_unique.item())
 
         # Use Bootstrap samples for the last t_forward steps
         for t in range(time_steps, time_steps + t_forward):

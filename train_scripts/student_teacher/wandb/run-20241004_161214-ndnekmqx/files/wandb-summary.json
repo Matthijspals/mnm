@@ -1,1 +1,0 @@
-{"loss": 88928112.0, "ll": -88928112.0, "likelihood_data": 79107688.0, "likelihood_latent": 9818350.0, "entropy": 12.696298599243164, "alpha": -0.4925852417945862, "noise_z": Infinity, "noise_x": Infinity, "noise_e": 0.09999999403953552, "lr": 0.0003, "_timestamp": 1728051139.2987182, "_runtime": 4.532087326049805, "_step": 3}

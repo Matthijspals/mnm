@@ -6,6 +6,18 @@ __pycache__/
 # C extensions
 *.so
 
+# yaml extensions 
+*.yaml
+*.json 
+*.wandb 
+
+notebooks/student_teacher/wandb 
+*.png
+*.svg
+*.mp4
+results/*
+py3/* 
+wandb/*
 figures/
 models/
 data/ 

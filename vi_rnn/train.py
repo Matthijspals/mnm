@@ -14,7 +14,6 @@ file_dir = str(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(file_dir + "/..")
 sys.path.append(file_dir)
 
-import matplotlib.pyplot as plt
 
 try:
     import wandb
@@ -51,7 +50,6 @@ def train_VAE(
         curr_epoch: int, epoch to start from (for restarting training)
         store_train_stats: Bool, store training statistics
     """
-
     stop_training = False  # not found any NANs yet
 
     # add losses to training_params dict (bit of a hack)
@@ -91,7 +89,7 @@ def train_VAE(
         task, batch_size=training_params["batch_size"], shuffle=True
     )
     dataloader.dataset.data = dataloader.dataset.data.to(device=device)
-    if dataloader.dataset.s_train is not None:
+    if hasattr(dataloader.dataset, 's_train') and dataloader.dataset.s_train is not None:
         dataloader.dataset.s_train = dataloader.dataset.s_train.to(device=device)
         dataloader.dataset.s_test = dataloader.dataset.s_test.to(device=device) 
         
@@ -203,7 +201,7 @@ def train_VAE(
             optimizer.zero_grad()
             # forward pass
             if training_params["loss_f"] == "opt_VGTF":
-                Loss_it, Z, Esample, ll_x, ll_z, H, log_likelihood, alphas = (
+                Loss_it, Z, Esample, ll_x, ll_z, H, log_likelihood, alphas, unique_particles, det_prior, det_obs, det_posterior = (
                     vae.forward_Optimal_VGTF(
                         inputs,
                         u=stim,
@@ -273,6 +271,7 @@ def train_VAE(
         noise_z = vae.rnn.std_embed_z(vae.rnn.R_z).detach()
         noise_x = vae.rnn.std_embed_x(vae.rnn.R_x).detach()
         alpha = torch.mean(alphas).item()
+        
 
         if store_train_stats:
             training_params["ll_z"].append(batch_ll_z)
@@ -311,7 +310,11 @@ def train_VAE(
                     "noise_z": noise_z.mean().item(),
                     "noise_x": noise_x.mean().item(),
                     "noise_e": torch.exp(vae.encoder.logvar / 2).mean().item(),
-                    "lr": scheduler.get_last_lr()[0]
+                    "lr": scheduler.get_last_lr()[0],
+                    "unique_particles": unique_particles[-1],
+                    "determinant prior cov": det_prior,
+                    "determinant observation cov": det_obs,
+                    "determinant posterior cov": det_posterior
                 }
             )
 

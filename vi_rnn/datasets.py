@@ -736,45 +736,63 @@ class Mante_Teacher(Dataset):
             self.s[idx].T.to(device=self.data.device)
     
 
-class CPT(Dataset): 
+class RandomNet_Teacher(Dataset):
+    def __init__(self, task_params, decay=0.9):
+        self.task_params = task_params
+        self.R_z = task_params["R_z"]
+        self.R_x = task_params["R_x"]
 
-    def __init__(self, task_params):
-        self.num_letters = task_params["num_letters"]
-        probs = torch.ones((self.num_letters)) / self.num_letters
-        self.seq_len = task_params["seq_len"] 
-        self.dist = torch.distributions.Categorical(probs)
-        self.n_trials = task_params["n_trials"]
+        self.dur = task_params["dur"]
+        self.decay = decay
+        
+        self.dim_z = task_params['dim_z']
+        self.dim_x = task_params['dim_x']
+        self.n = torch.randn((self.dim_x, self.dim_z))
+        self.m = torch.randn((self.dim_x, self.dim_z)) 
+        self.B = torch.randn((self.dim_x,))
+        self.n_trials = task_params['n_trials']
+        self.relu = torch.nn.ReLU()
+        self.non_lin = lambda x, h: self.relu(x + h) - self.relu(x)
+        
+        self.generate_trajectory() 
+        
+    def generate_trajectory(self):
+        # generate teacher data
+        if "r0" in self.task_params:
+            r0 = self.task_params["r0"]
+        else:
+            r0 = torch.randn(self.n_trials) * 0.1
+        self.latents = torch.zeros(self.dim_z, self.n_trials, self.dur, dtype=torch.float32)
+        self.data = torch.zeros(self.dim_x, self.n_trials, self.dur, dtype=torch.float32)
+        self.latents[0, :, 0] = r0 
+        self.latents[0, :, 0] += torch.randn(self.n_trials) * self.R_z
+        
+        for t in range(1, self.dur):
+            self.latents[:, :, t] = self.decay * self.latents[:, :, t - 1]
+            X = self.m @ self.latents[:, :, t - 1] 
+ 
+            self.latents[:, :, t] += (
+                self.n.T @ self.non_lin(X, self.B.unsqueeze(1)) + torch.randn(self.n_trials) * self.R_z
+            )
+            if self.task_params["out"] == "rates":
+                for t in range(self.dur):
+                    self.data[:, :, t] = self.non_lin(
+                        self.m @ self.latents[:, :, t] + self.B.unsqueeze(1) 
+                    )
+            elif self.task_params["out"] == "currents":
+                for t in range(self.dur):
+                    self.data[:, :, t] = self.m @ self.latents[:, :, t] 
 
-    def __len__(self): 
+        self.data = self.data.permute(1, 0, 2)
+        # z-score the population activity 
+        self.data = (self.data - self.data.mean(axis=-1).unsqueeze(-1)) / self.data.std(axis=-1).unsqueeze(-1)
+        self.data = self.data.permute(0, 2, 1)
+    
+    def __len__(self):
         return self.n_trials 
 
-    def __getitem__(self, idx): 
-        """
-        Returns a trial of length seq_len 
-        
-        Returns: 
-            input (torch.tensor; seq_len x n_inp): task inputs
-            targets (torch.tensor; seq_len x n_targets): expected outputs 
-            mask (torch.tensor; seq_len x n_targets): masks
-        """
-        # sample seq_len letters from a categorical distribution 
-        samples = self.dist.sample((self.seq_len,))
-        # convert to one-hot encoding 
-        input = torch.nn.functional.one_hot(samples, num_classes=self.num_letters).to(torch.float32) 
-        # define binary targets 
-        targets = torch.zeros((self.seq_len, 2)).to(torch.float32)
-        diff = samples.diff()
-        same_idx = torch.where(diff == 0)[0] + 1
-        mask = torch.ones(targets.shape[0], dtype=torch.bool)
-        mask[same_idx] = False 
-        targets[same_idx, 0] = 1.0
-        targets[mask, 1] = 1.0
-        mask = torch.ones((self.seq_len, 1)).to(torch.float32)
-        return input, (targets, input), mask 
-             
+    def __getitem__(self, idx):
+        return self.data[idx].T, \
+                torch.zeros(0, self.dur, device=self.data.device)
 
-class CPT_Teacher(Dataset): 
-    def __init__(self, task_params, teacher_params):
-        self.neuromodulation = 'presynaptic'
-        self.gain = 1.0
-        self.non_linearity = 'sigmoid'
+    

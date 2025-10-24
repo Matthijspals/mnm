@@ -3,14 +3,20 @@ import sys
 
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
+
+import torch
+import numpy as np
+
 from evaluation.kl_Gauss import calc_kl_from_data
 from evaluation.pse import power_spectrum_helling
-import torch
+
 import scipy.ndimage as ndimage
+from scipy.stats import zscore, pearsonr
 import scipy.signal as signal
-import numpy as np
-from scipy.stats import zscore
-from scipy.signal import convolve 
+from scipy.optimize import linear_sum_assignment
+
+from vi_rnn.utils import generate_trajectory 
+
 
 def predict_X(
         vae, 
@@ -95,6 +101,7 @@ def predict_X(
 
         return trajectories.reshape(n_trials, -1, trial_dur)
 
+
 def compute_r_2(signals_true, signals_pred):
     """
     Compute the R² (coefficient of determination) for a single neuron across multiple trials.
@@ -115,24 +122,6 @@ def compute_r_2(signals_true, signals_pred):
     r_2_arr = 1 - (ss_res / var)
     return r_2_arr.mean().item(), r_2_arr.std().item()
 
-
-def compute_KL_divergence(pred_trajectories, x):
-    """
-    Computes the KL divergence over simulated and actual trajectories 
-    
-    Args: 
-        pred_trajectories (torch.Tensor); n_trials x dim_x x time_steps: predicted trajectories 
-        x (torch.Tensor): n_trials x dim_x x time_steps: actual neural activity 
-
-    Returns: 
-        kl_div: Estimated kernel divergence  
-    """
-    # reshape pred_trajectories and x 
-    n_trials, trial_dur = pred_trajectories.shape[0], pred_trajectories.shape[2]
-    pred_trajectories_ = pred_trajectories.T.reshape(n_trials*trial_dur, -1)
-    x_ = x.T.reshape(n_trials*trial_dur, -1)
-    kl_div = calc_kl_from_data(pred_trajectories_, x_)
-    return kl_div.item()
 
 def eval_VAE(
     vae,
@@ -257,6 +246,7 @@ def mean_rate(data_gen, data_real):
     )
     return mean_rate_error
 
+
 def van_rossum_distance(spike_train1, spike_train2, tau, T):
     """
     Computes the Van Rossum distance between two spike trains.
@@ -277,11 +267,158 @@ def van_rossum_distance(spike_train1, spike_train2, tau, T):
     kernel /= np.sum(kernel)  # Normalize kernel
 
     # Convolve spike trains with the exponential kernel
-    filtered_spike_train1 = convolve(spike_train1, kernel, mode='same')
-    filtered_spike_train2 = convolve(spike_train2, kernel, mode='same')
+    filtered_spike_train1 = signal.convolve(spike_train1, kernel, mode='same')
+    filtered_spike_train2 = signal.convolve(spike_train2, kernel, mode='same')
 
     # Compute the Euclidean distance between the convolved signals
     distance = np.sqrt(np.trapz((filtered_spike_train1 - filtered_spike_train2) ** 2, dx=1))
-
-
     return distance
+
+
+def compute_R(vae, 
+              neuromodulation, 
+              x_test, 
+              s_test, 
+              stim_arr_test,
+              population_trial_avgs,
+              trial_type, 
+              seq_periods, 
+              num_trajs=10):
+    """
+    Computes the correlation coefficient (R) between the averaged stimulus response 
+    and averaged activity over trials
+    Args:
+        vae: Trained model 
+        neuromodulation (string): Neuromodulation type (None, postsynaptic, presynaptic, additive, rank) 
+        x_test (torch.tensor; neurons x time): Concatenated tensor of neural activity. Indices belonging to specific
+                                                blocks of activity are found in seq_periods array
+        s_test (torch.tensor; time): Test neuromodulation signal 
+        stim_arr_test (torch.tensor; stimuli x time): Stimuli train for trials 
+        population_trial_avgs (torch.tensor; neurons x time): Trial averaged population activity for white noise trials 
+        trial_type (string): One of ['white noise', 'airpuff', 'reward']
+        seq_periods (list(list); indices for different signal blocks. First is baseline, next 4 
+                                are white noise trials, then three blocks of airpuffs followed by 3 blocks of reward
+        num_trajs (int): Number of stochastic trajectories to generate and average 
+    """
+    trial_block = None 
+    if trial_type == 'white noise':
+        trial_block = [1, 5]
+    elif trial_type == 'airpuff': 
+        trial_block = [5, 8]
+    else: 
+        trial_block = [8, 11]
+
+    # average neural activity across trials 
+    trajs_gen = [generate_trajectory(x_test[:, seq_periods[j][0]:seq_periods[j][1]],
+                                s_test[seq_periods[j][0]:seq_periods[j][1]],
+                                None if stim_arr_test is None else stim_arr_test[:, seq_periods[j][0]:seq_periods[j][1]],
+                                vae, 
+                                neuromodulation
+                                )[1] for i in range(num_trajs) for j in range(trial_block[0], trial_block[1])]
+    avg_trajs_gen = torch.stack(trajs_gen).mean(axis=0)
+    r = pearsonr(avg_trajs_gen.flatten(), population_trial_avgs.flatten())[0]
+    return r
+
+
+def compute_KL_divergence(pred_trajectories, x, n_samples=2000):
+    """
+    Computes the KL divergence over simulated and actual trajectories 
+    
+    Args: 
+        pred_trajectories (torch.Tensor); n_trials x dim_x x time_steps: predicted trajectories 
+        x (torch.Tensor): n_trials x dim_x x time_steps: actual neural activity 
+
+    Returns: 
+        kl_div: Estimated kernel divergence  
+    """
+    # reshape pred_trajectories and x 
+    n_trials, trial_dur = pred_trajectories.shape[0], pred_trajectories.shape[2]
+    pred_trajectories_ = pred_trajectories.permute((0, 2, 1)).reshape(n_trials*trial_dur, -1)
+    x_ = x.permute((0, 2, 1)).reshape(n_trials*trial_dur, -1)
+    kl_div = calc_kl_from_data(pred_trajectories_, x_, num_samples=n_samples)
+    return kl_div.item()
+
+
+def sliced_wasserstein_distance(
+    encoded_samples: torch.Tensor,
+    distribution_samples: torch.Tensor,
+    num_projections: int = 50,
+    p: int = 2,
+    device: str = "cpu",
+) -> torch.Tensor:
+    """
+    Sliced Wasserstein distance between encoded samples and distribution samples.
+    Note that the SWD does not converge to the true Wasserstein distance, but rather it is a different proper distance metric.
+
+    Args:
+        encoded_samples (torch.Tensor): tensor of encoded training samples
+        distribution_samples (torch.Tensor): tensor drawn from the prior distribution
+        num_projection (int): number of projections to approximate sliced wasserstein distance
+        p (int): power of distance metric
+        device (torch.device): torch device 'cpu' or 'cuda' gpu
+
+    Return:
+        torch.Tensor: Tensor of wasserstein distances of size (num_projections, 1)
+    """
+
+    # check input (n,d only)
+    assert len(encoded_samples.size()) == 2, "Real samples must be 2-dimensional, (n,d)"
+    assert len(distribution_samples.size()) == 2, "Fake samples must be 2-dimensional, (n,d)"
+
+    embedding_dim = distribution_samples.size(-1)
+
+    projections = rand_projections(embedding_dim, num_projections).to(device)
+
+    encoded_projections = encoded_samples.matmul(projections.transpose(-2, -1))
+
+    distribution_projections = distribution_samples.matmul(projections.transpose(-2, -1))
+
+    wasserstein_distance = (
+        torch.sort(encoded_projections.transpose(-2, -1), dim=-1)[0]
+        - torch.sort(distribution_projections.transpose(-2, -1), dim=-1)[0]
+    )
+
+    wasserstein_distance = torch.pow(torch.abs(wasserstein_distance), p)
+
+    return torch.pow(torch.mean(wasserstein_distance, dim=(-2, -1)), 1 / p)
+
+
+def rand_projections(embedding_dim: int, num_samples: int):
+    """
+    This function generates num_samples random samples from the latent space's unti sphere.r
+
+    Args:
+        embedding_dim (int): dimention of the embedding
+        sum_samples (int): number of samples
+
+    Return :
+        torch.tensor: tensor of size (num_samples, embedding_dim)
+    """
+
+    ws = torch.randn((num_samples, embedding_dim))
+    projection = ws / torch.norm(ws, dim=-1, keepdim=True)
+    return projection
+
+
+def compute_wasserstein(mu_inf, mu_gen, n_samples=3000):
+    """
+    Estimate the 2-Wasserstein distance between two GMMs (mu_inf, mu_gen)
+    via the Hungarian algorithm for Optimal Transport.
+
+    mu_inf, mu_gen: (T, dim_x) => each row is a GMM component mean
+    scale: float or tensor => std for diagonal covariance
+    n_samples: how many points to sample from each distribution
+    """
+    # Draw samples from each GMM
+    z_inf = mu_inf[:n_samples, :]
+    z_gen = mu_gen[:n_samples, :]
+    
+    diff = z_inf[:, None, :] - z_gen[None, :, :]
+    cost_matrix = np.sum(diff**2, axis=2)  # shape (n_samples, n_samples)
+    
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    w2_squared = cost_matrix[row_ind, col_ind].mean()
+    w2_distance = np.sqrt(w2_squared)
+    
+    return w2_distance

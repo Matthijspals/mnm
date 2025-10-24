@@ -12,7 +12,7 @@ class LRRNN(nn.Module):
     Code inspired by https://github.com/DurstewitzLab/dendPLRNN
     """
 
-    def __init__(self, dim_x, dim_z, dim_u, dim_N, dim_s, params):
+    def __init__(self, dim_x, dim_z, dim_u, dim_N, dim_s, params, cell_types=None):
         """
         Args:
             dim_x (int): dimensionality of the data
@@ -21,6 +21,7 @@ class LRRNN(nn.Module):
             dim_N (int): amount of neurons in the network
             dim_s (int): dimensionality of neuromodulator signals
             params (dict): dictionary of parameters
+            cell_types (torch.tensor; neurons,): a 1D mask identifying excitatory and inhibitory neurons
         """
 
         super(LRRNN, self).__init__()
@@ -141,7 +142,9 @@ class LRRNN(nn.Module):
             train_latent_bias=params["train_latent_bias"],
             train_neuron_bias=params["train_neuron_bias"],
             neuromodulation=None if "neuromodulation" not in params.keys() else params["neuromodulation"],
-            train_nm_params=True if "train_nm_params" not in params.keys() else params["train_nm_params"]
+            train_nm_params=True if "train_nm_params" not in params.keys() else params["train_nm_params"],
+            train_alpha=True if "train_alpha" not in params.keys() else params["train_alpha"],
+            cell_types=cell_types
         )
 
         # initialise the observation ste

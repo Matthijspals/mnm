@@ -117,7 +117,9 @@ def load_model(name, load_encoder=True):
             vae_params["rnn_params"]["out_nonlinearity"] = vae_params.pop("obs_rectify")
         else:
             print("no out nonlinearity found, setting to identity")
-            vae_params["rnn_params"]["out_nonlinearity"] = "identity"            
+            vae_params["rnn_params"]["out_nonlinearity"] = "identity"       
+    if "cell_types" not in vae_params:
+        vae_params["cell_types"] = None      
     if "dim_s" not in vae_params: 
         vae_params["dim_s"] = vae_params["dim_z"]
     if "padding_location" not in vae_params["enc_params"]:

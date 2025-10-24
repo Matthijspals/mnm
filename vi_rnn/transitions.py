@@ -25,7 +25,9 @@ class Transition(nn.Module):
         train_latent_bias=True,
         train_neuron_bias=True,
         neuromodulation=None,
-        train_nm_params=True
+        train_nm_params=True,
+        train_alpha=True,
+        cell_types=None
     ):
         """
         Args:
@@ -40,6 +42,9 @@ class Transition(nn.Module):
             weight_scaler (float): scaling factor for the weights
             train_latent_bias (bool): whether to train the bias of the latents (z)
             train_neuron_bias (bool): whether to train the bias of the neurons (x)
+            neuromodulation (str): neuromodulation type(s)
+            train_nm_params (bool): whether to train neuromodulation parameters
+            cell_types (torch.tensor; neurons): a mask array of +1 and -1 identifying excitatory and inhibitory neurons
         """
         super(Transition, self).__init__()
         self.dx = dx 
@@ -81,11 +86,13 @@ class Transition(nn.Module):
             print("using sigmoid activation")
             self.nonlinearity = lambda x, h: torch.sigmoid(x - h) 
             self.dnonlinearity = sigmoid_derivative  
+
         # time constants
         if shared_tau:
             if exp_par:
                 self.AW = nn.Parameter(
-                    torch.log(-torch.log(torch.ones(1, 1, 1, 1) * shared_tau))
+                    torch.log(-torch.log(torch.ones(1, 1, 1, 1) * shared_tau)),
+                    requires_grad=train_alpha
                 )
                 self.cast_A = lambda x: torch.exp(-torch.exp(x))
             else:
@@ -112,12 +119,18 @@ class Transition(nn.Module):
         # bias of the latents
         self.hz = nn.Parameter(torch.zeros(dz), requires_grad=train_latent_bias)
 
+         # process df with 1s and -1s for excitatory and inhibitory neurons as a vector
+        if cell_types is not None:
+            self.register_buffer('cell_type_mask', cell_types)
+        else:
+            self.cell_type_mask = None
+
         # weights (left and right singular vectors)
         if not m_orth:
             if weight_dist == "uniform":
                 self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
             elif weight_dist == "gauss":
-                self.n, self.m = initialize_Ws_gauss(dz, hidden_dim)
+                self.n, self.m = initialize_Ws_gauss(dz, hidden_dim, weight_scaler)
             else:
                 print("WARNING: weight distribution not implemented, using uniform")
                 self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
@@ -152,20 +165,24 @@ class Transition(nn.Module):
         """
         A = self.cast_A(self.AW)
         R = self.get_rates(z, s=s, v=v)
-        
+        n = self.n
+
+        if self.cell_type_mask is not None:
+            n = self.dales_law()
+
         if self.neuromodulation == 'rank':
             s_z = (self.A @ s.T).T
             s_z = s_z.view(s_z.shape[0], s_z.shape[1], 1, 1)
             z = (
                 A * z
-                +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BNTK->BzTK", self.n * self.scaling, R)
+                +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BNTK->BzTK", n * self.scaling, R)
                 + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
             )
 
         else: 
             z = (
                 A * z
-                + torch.einsum("zN,BNTK->BzTK", self.n * self.scaling , R)
+                + torch.einsum("zN,BNTK->BzTK", n * self.scaling , R)
                 + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
             )
         return z
@@ -186,7 +203,10 @@ class Transition(nn.Module):
         if len(z.shape) == 3: z = z.unsqueeze(3) # add particle dimension 
         if v is not None and len(v.shape) == 3: v = v.unsqueeze(3)
         m = self.m_transform(self.m)
-        
+
+        if self.cell_type_mask is not None:
+            m = torch.abs(m) 
+
         X = torch.einsum("Nz,BzTK->BNTK", m, z)
     
         if v is not None:
@@ -226,3 +246,14 @@ class Transition(nn.Module):
         proj_left = self.n.unsqueeze(0).unsqueeze(-1) * derivatives_act.unsqueeze(1)
         jacobian = A + torch.einsum("BzNT,Nx->BzxT", proj_left, m)
         return jacobian
+
+    def dales_law(self):
+
+        # cell_type_mask is a vector of 1s and -1s (corresponding to excitatory and inhibitory neurons) w/ length n
+        # excitatory_mask is a diagonal matrix with 1s for excitatory neurons and -1s for inhibitory neurons
+        n = self.n
+        D = self.cell_type_mask.repeat((self.dz, 1))
+        
+        n = torch.abs(n) * D
+        
+        return n
