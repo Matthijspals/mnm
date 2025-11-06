@@ -14,7 +14,7 @@ from vi_rnn.load_data import *
 from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.datasets import DTTDataset
-CUDA = False
+CUDA = True
 
 if __name__ == '__main__':
     config = {
@@ -38,7 +38,7 @@ if __name__ == '__main__':
         "bs": 512, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 3,
+        "epochs": 300,
         "shuffle": False,
         "k": 64,
         "dales_law": False,
@@ -48,7 +48,8 @@ if __name__ == '__main__':
         "seed": None,
         "shared_tau": 0.9,
         "train_alpha": True,
-        "stim":True #what is the right setting for this
+        "stim":True, #what is the right setting for this
+        "ed_ratio": .5
     }
 
 
@@ -84,7 +85,8 @@ if __name__ == '__main__':
     if config["seed"] is not None:
         seeds = [config["seed"]]
     else:
-        seeds = np.arange(0, 1)
+        seeds = np.random.randint(0, 10000, size=1).tolist()
+        print("SETTING SEEDS TO: ", seeds)
     for seed in seeds:
         print(f'Training seed: {seed}')
         torch.manual_seed(seed)
@@ -174,7 +176,8 @@ if __name__ == '__main__':
             "loss_f": "opt_VGTF",
             "resample": "systematic",  # , multinomial or none"
             "observation_likelihood": "Gauss",  # observation likelihood,
-            "neuromodulation": config["neuromodulation"]
+            "neuromodulation": config["neuromodulation"],
+            "ed_ratio": config["ed_ratio"]
         }
         
         dim_x = task.data.shape[1]

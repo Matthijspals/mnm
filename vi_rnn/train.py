@@ -209,7 +209,8 @@ def train_VAE(
                         resample=training_params["resample"],
                         s=s,
                         sim_v=training_params["sim_v"],
-                        sim_s=training_params["sim_s"]
+                        sim_s=training_params["sim_s"],
+                        ed_ratio=training_params["ed_ratio"]
                     )
                 )
             elif training_params["loss_f"] == "VGTF":

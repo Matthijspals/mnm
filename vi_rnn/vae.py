@@ -82,7 +82,7 @@ class VAE(nn.Module):
         self.causal = vae_params["causal"]
         self.MSE_loss = nn.MSELoss()
 
-    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=True, sim_s=True):
+    def forward_Optimal_VGTF(self, x, u=None, k=1, resample=False, s=None, sim_v=True, sim_s=True, ed_ratio=0.):
         """
         Forward pass of the VAE
         Note, here the approximate posterior is the optimal linear combination of the encoder and the RNN
@@ -127,6 +127,11 @@ class VAE(nn.Module):
 
         batch_size, dim_x, time_steps = x.shape
         dim_z = self.dim_z
+
+        if ed_ratio>0:
+            ed_mask = torch.rand(batch_size, time_steps, device=x.device) > ed_ratio # True means use encoder
+        else: 
+            ed_mask = torch.ones(batch_size, time_steps, device=x.device, dtype=torch.bool)
 
         if sim_s: 
             s_tilde = torch.zeros(batch_size, self.dim_s).to(device=x.device)
@@ -296,11 +301,36 @@ class VAE(nn.Module):
             ) + torch.einsum("zx,BxK->BzK", Kalman_gain, x_t)
             
             # Sample from the posterior and calculate likelihood
+            #Q_dist = torch.distributions.MultivariateNormal(
+            #    loc=mean_Q.permute(0, 2, 1), scale_tril=var_Q_cholesky
+            #)
+            #Qz = Q_dist.rsample()
+            #ll_qz = Q_dist.log_prob(Qz)
+
+                 # add mask
+            # ------
+            mask = ed_mask[:,t].view(-1,1,1)
+            #print(torch.sum(mask))
+
+            mean_Q = mask * mean_Q + (~mask) * prior_mean
+            var_Q_cholesky_masked = mask * var_Q_cholesky + (~mask) * eff_var_prior_chol#_expanded
+
+            mean_Q_flat = mean_Q.permute(0, 2, 1).reshape(batch_size * k, dim_z)          # (B*K, z)
+            var_Q_cholesky_flat = var_Q_cholesky_masked.repeat_interleave(k, dim=0) # (B*K, z, z)
+
             Q_dist = torch.distributions.MultivariateNormal(
-                loc=mean_Q.permute(0, 2, 1), scale_tril=var_Q_cholesky
+                loc=mean_Q_flat,
+                scale_tril=var_Q_cholesky_flat
             )
-            Qz = Q_dist.rsample()
-            ll_qz = Q_dist.log_prob(Qz)
+
+            Qz = Q_dist.rsample()            # (B*K, z)
+            ll_qz = Q_dist.log_prob(Qz)      # (B*K,)
+
+            Qz = Qz.view(batch_size, k, dim_z)#.permute(0, 2, 1)  # (B, z, K)
+            ll_qz = ll_qz.view(batch_size, k)
+
+
+
 
             # Calculate likelihood under the prior
             pz_dist = torch.distributions.MultivariateNormal(
