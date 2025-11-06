@@ -14,31 +14,31 @@ from vi_rnn.load_data import *
 from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.datasets import DTTDataset
-
+CUDA = False
 
 if __name__ == '__main__':
     config = {
-        "rank": 20,
+        "rank": 4,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
         "deconvolve": False, 
         "convolve_spikes": True, 
         "neuromodulation": "postsynaptic",
-        "dataset": "nk341_mPFC",
+        "dataset": "nk339_mPFC",
         "normalize_neuromod": True, 
         'center_neuromod': False,
-        "sim_s": True, 
-        "sim_v": False, 
+        "sim_s": False, 
+        "sim_v": True, 
         "gpu": "0",
         "sampling_rate": 30_000, 
-        "data_dir": "data/recordings/nk341_mPFC/",
+        "data_dir": "data/nk339/",
         "out_dir": "models/all/",
         "bin_size": 0.05, 
         "bs": 512, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 300,
+        "epochs": 3,
         "shuffle": False,
         "k": 64,
         "dales_law": False,
@@ -47,87 +47,12 @@ if __name__ == '__main__':
         "load_physiology": False,
         "seed": None,
         "shared_tau": 0.9,
-        "train_alpha": True
+        "train_alpha": True,
+        "stim":True #what is the right setting for this
     }
 
-    parser = argparse.ArgumentParser(description='train')
-    parser.add_argument('-n', '--neuromodulation', help='Neuromodulation type')
-    parser.add_argument('-g', '--gpu', help='GPU')
-    parser.add_argument('-d', '--dataset', help='Dataset type')
-    parser.add_argument('-e', '--epochs', help='Number of epochs to train')
-    parser.add_argument('-r', '--rank', help='Rank of network')
-    parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control')
-    parser.add_argument('-k', '--particles', help='Number of particles')
-    parser.add_argument('-t', '--stim', help='Add stimuli')
-    parser.add_argument('-a', '--activation', help='Activation function (relu, sigmoid, tanh)')
-    parser.add_argument('-l', '--dales_law', help='Apply Dale\'s law')
-    parser.add_argument('-b', '--seed', help='Seed')
-    parser.add_argument('-z', '--bin_size', help='Bin size')
-    parser.add_argument('-y', '--learning_rate', help='Learning rate')
-    parser.add_argument('-c', '--tau', help='Time constant')
 
-    args = parser.parse_args() 
-    print('args = ')
-    print(args)
-    if args.neuromodulation is not None: 
-        config["neuromodulation"] = args.neuromodulation 
-        if 'stim' in config["neuromodulation"]: 
-            print(f'1 setting to true')
-            config["neuromodulation"] = config["neuromodulation"].split('_')[0]
-            config["sim_v"] = True 
-        if args.stim is not None and args.stim == 'True':
-            config["sim_v"] = True
-        if config['neuromodulation'] == 'None': config['neuromodulation'] = None
-    if config["neuromodulation"] != "additive": 
-        config["sim_s"] = False 
-    if config["z_score_neuromod"]:
-        config["sim_s"] = True 
-    if args.dataset is not None: 
-        config["dataset"] = args.dataset 
 
-    if config["dataset"] == "nk340_mPFC": 
-        config["data_dir"] = "data/recordings/nk340_mPFC/"
-    elif config["dataset"] == "nk339_mPFC": 
-        config["data_dir"] = "data/recordings/nk339_mPFC/"
-    elif config["dataset"] == "nk341_BLA":
-        config["data_dir"] = "data/recordings/nk341_BLA/"
-    elif config["dataset"] == "nk340_BLA":
-        config["data_dir"] = "data/recordings/nk340_BLA/"
-    
-    
-    if args.gpu is not None: 
-        config["gpu"] = args.gpu 
-
-    if args.epochs:
-        config["epochs"] = int(args.epochs)
-
-    if args.rank:
-        config["rank"] = int(args.rank)
-
-    if args.particles:
-        config["k"] = int(args.particles)
-
-    if args.activation is not None:
-        config["activation"] = args.activation
-
-    if args.dales_law is not None:
-        config["dales_law"] = True if args.dales_law == 'True' else False
-
-    if args.seed is not None:
-        config["seed"] = int(args.seed)
-
-    if args.bin_size is not None:
-        config["bin_size"] = float(args.bin_size)
-
-    if args.learning_rate is not None: 
-        config["learning_rate"] = float(args.learning_rate)
-    
-    if args.tau is not None: 
-        config["shared_tau"] = float(args.tau)
-        
-    os.environ['CUDA_VISIBLE_DEVICES'] = config["gpu"]
-    if args.shuffle: 
-        config["shuffle"] = int(args.shuffle)
     print(config, flush=True)
 
     # load data 
@@ -150,6 +75,7 @@ if __name__ == '__main__':
     
     # prepare dataset 
     x_train, s_train, stim_arr_train, seq_periods, _, _, _ = prepare_dataset(spike_counts, neuromod_activity, trials_df, config, test=False, time_delta=15)
+    
     # normalize neuromodulators 
     if config["z_score_neuromod"] == False and config["min_max_norm_neuromod"]:
         s_train = (s_train - s_train.min()) / (s_train.max() - s_train.min()) 
@@ -158,7 +84,7 @@ if __name__ == '__main__':
     if config["seed"] is not None:
         seeds = [config["seed"]]
     else:
-        seeds = np.arange(0, 10)
+        seeds = np.arange(0, 1)
     for seed in seeds:
         print(f'Training seed: {seed}')
         torch.manual_seed(seed)
@@ -174,7 +100,10 @@ if __name__ == '__main__':
             "name": "",
             "dataset_name": config["data_dir"],
         }
-        device = torch.device('cuda')
+        if CUDA:
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
         task = DTTDataset(task_params, 
                             x_train.T, 
                             device=device,
@@ -232,7 +161,7 @@ if __name__ == '__main__':
             "grad_norm": 10,
             "eval_epochs": 10,
             "batch_size": config["bs"],
-            "cuda": True,
+            "cuda": CUDA,
             "smoothing": 20,
             "freq_cut_off": 10000,
             "sim_obs_noise": 0,

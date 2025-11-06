@@ -26,7 +26,7 @@ def train_VAE(
     training_params,
     task,
     eval_task=None,
-    sync_wandb=False,
+    sync_wandb=True,
     out_dir=None,
     fname=None,
     optimizer=None,

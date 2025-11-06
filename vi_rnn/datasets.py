@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import h5py
 from pathlib import Path
-from data.mante import generate_mante_data
+#from data.mante import generate_mante_data
 
 class Basic_dataset(Dataset):
     def __init__(self, task_params, data, s=None, data_eval=None):
