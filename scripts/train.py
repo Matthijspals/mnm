@@ -18,10 +18,10 @@ CUDA = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 4,
+        "rank": 12,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
-        "z_score_neurons": False,
+        "z_score_neurons": True,
         "deconvolve": False, 
         "convolve_spikes": True, 
         "neuromodulation": "postsynaptic",
@@ -35,10 +35,10 @@ if __name__ == '__main__':
         "data_dir": "data/nk339/",
         "out_dir": "models/all/",
         "bin_size": 0.05, 
-        "bs": 512, 
+        "bs": 32, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 300,
+        "epochs": 1000,
         "shuffle": False,
         "k": 64,
         "dales_law": False,
@@ -49,7 +49,8 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, #what is the right setting for this
-        "ed_ratio": .5
+        "ed_ratio": 0.25,
+        'center_data': True
     }
 
 
@@ -98,7 +99,7 @@ if __name__ == '__main__':
         
         task_params = {
             "dur": 100,
-            "n_trials": 3000,
+            "n_trials": 5000,
             "name": "",
             "dataset_name": config["data_dir"],
         }
@@ -128,16 +129,16 @@ if __name__ == '__main__':
             "init_noise_z": 0.1,
             "init_noise_z_t0": 0.1,
             "init_noise_x": 0.1,
-            "scalar_noise_z": "Cov",
+            "scalar_noise_z":"Cov",# "Cov",
             "scalar_noise_x": False,
-            "scalar_noise_z_t0": "Cov",
+            "scalar_noise_z_t0": "Cov",#"Cov",
             "identity_readout": True,
             "activation": config["activation"],
             "exp_par": True,
             "shared_tau": config["shared_tau"],
             "readout_rates": "currents",
-            "train_obs_bias": False,
-            "train_obs_weights": False, 
+            "train_obs_bias": True,
+            "train_obs_weights": True, 
             "train_latent_bias": False,
             "train_neuron_bias": True, # TODO: return to True
             "orth": False,
@@ -186,13 +187,24 @@ if __name__ == '__main__':
         dim_u = 9
         dim_s = 1 
         
+
+        enc_params ={
+            "init_kernel_sizes": [14, 4, 2],
+            "nonlinearity": "gelu",
+            "n_channels": [128, 64],
+            "init_scale": 0.05,
+            "padding_location": "acausal",
+            "constant_var": False,
+            "padding_mode": "constant"  # reflect #reflect # constant reflect replicate or circular
+        }
+
         VAE_params = {
             "dim_x": dim_x,
             "dim_z": dim_z,
             "dim_u": dim_u if config['sim_v'] else 0,
             "dim_N": dim_N,
             "dim_s": dim_s,
-            "enc_architecture": "Inv_Obs", #CNN
+            "enc_architecture": "None",#CNN", #CNN
             "enc_params": enc_params,
             "prior_architecture": "PLRNN",
             "rnn_params": rnn_params,

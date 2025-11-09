@@ -140,7 +140,7 @@ class VAE(nn.Module):
 
         # Get the initial prior mean
         if sim_v:
-            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), torch.zeros_like(u[:,:,0])).unsqueeze(2).expand(batch_size,self.dim_z,k)
+            prior_mean = self.rnn.get_initial_state(torch.zeros_like(u[:,:,0]),  s_tilde).unsqueeze(2).expand(batch_size,self.dim_z,k)
             v = torch.zeros(batch_size,self.dim_u,1,1,device = x.device)
         
         else: #initialise in the affine subspace corresponding to the input
@@ -624,7 +624,7 @@ class VAE(nn.Module):
             ll_qzs.append(torch.logsumexp(ll_qz.detach(), axis=-1) - np.log(k))
             log_ws.append(torch.logsumexp(log_w, axis=-1) - np.log(k))
             Qzs.append(Qz)
-            unique_particles.append(num_unique.item())
+            #unique_particles.append(num_unique.item())
 
         # Use Bootstrap samples for the last t_forward steps
         for t in range(time_steps, time_steps + t_forward):

@@ -106,7 +106,8 @@ def load_data(config):
         neuromod_activity = lc_neuromod
 
     # mean-center the neurons 
-    spike_counts = spike_counts - spike_counts.mean(axis=1, keepdims=True)
+    if config['center_data']:
+        spike_counts = spike_counts - spike_counts.mean(axis=1, keepdims=True)
     if config['z_score_neurons']:
         spike_counts = spike_counts / spike_counts.std(axis=1, keepdims=True) 
     # spike_counts = (spike_counts - np.expand_dims(spike_counts.mean(axis=1), -1)) / np.expand_dims(spike_counts.std(axis=1), -1)
@@ -114,15 +115,26 @@ def load_data(config):
     if config['convolve_spikes']:
         kernel_size = 25
         sigma = 5
-        
-        gaussian_kernel = gaussian(kernel_size, sigma) 
-        # Make it causal: Zero out future values
-        # gaussian_kernel[:kernel_size // 2] = 0
+
+        # Create Gaussian kernel
+        gaussian_kernel = gaussian(kernel_size, sigma)
+        # Keep only the causal part (including the current time)
+        #gaussian_kernel[:kernel_size // 2] = 0
         gaussian_kernel /= gaussian_kernel.sum()
+
         smoothed_spikes = []
         for n in range(spike_counts.shape[0]):
-            smoothed_spikes.append(convolve(spike_counts[n], gaussian_kernel, mode='full'))
-        spike_counts = np.array(smoothed_spikes)[:, :len(neuromod_activity)]
+            # Zero-pad on the left so the first samples have enough past context
+            original_length = spike_counts[n].shape[0]
+            padded = np.pad(spike_counts[n], (kernel_size - 1, 0))
+            # Convolve and take only the 'valid' part (no future context)
+            smoothed = convolve(padded, gaussian_kernel, mode='valid')[:original_length]
+            smoothed_spikes.append(smoothed)
+
+        spike_counts = np.array(smoothed_spikes)
+
+
+
     # load trials info 
     print(np.isnan(spike_counts).any())
     trials_dir = os.path.join(config['data_dir'], 'trials') 

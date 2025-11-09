@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
+
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 
 from fixed_points.find_fixed_points_analytic import find_fixed_points_analytic
@@ -425,9 +426,43 @@ def classify_fixed_points(U, V, h, a, A, s_vals, fixed_points, neuromodulation):
             else:
                 unstable.append([z_cur[0], z_cur[1], s_vals[i]])
     return stable, unstable
+def Kalman_update_lowD(eff_var_transition_chol, B, eff_var_x):
+    """perform Kalman update step, efficient when dim_z << dim_x
+    
+    Args:
+        eff_var_transition_chol: (z, z) Cholesky of transition covariance
+        B: (z, x) observation mapping
+        eff_var_x: (x,) effective observation variance (diag)
+        mask: optional (B,) boolean tensor indicating whether to apply update
+    """
+    dim_z = eff_var_transition_chol.shape[0]
+    eff_var_x_inv = 1.0 / eff_var_x
+
+    var_Q = torch.linalg.inv(
+        torch.cholesky_inverse(eff_var_transition_chol)
+        + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
+    )
+    Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
+    alpha = Kalman_gain @ B.T
+    one_min_alpha = torch.eye(dim_z, device=alpha.device) - alpha
+
+    var_Q = torch.eye(dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
+    var_Q_cholesky = torch.linalg.cholesky(var_Q)
+
+    return alpha, one_min_alpha, Kalman_gain, var_Q_cholesky
 
 
-def generate_trajectory(x_test, s_test, stim, vae, neuromod, noise_scale=1.0, sim_s=False):
+def chol_cov_embed(x):
+    """
+    Positive semi-definite embedding of a vector as a lower triangular matrix
+    """
+    chol_cov = torch.tril(x, diagonal=-1) + torch.diag_embed(
+        torch.exp(x[range(x.shape[0]), range(x.shape[0])] / 2)
+    )
+    return chol_cov
+
+
+def generate_trajectory(x_test, s_test, stim, vae, neuromod, noise_scale=1.0, sim_s=False,initial_state="posterior_sample", k=1):
     """
     Args:
         x_test (torch.tensor; neurons x time): Neural activity 
@@ -446,8 +481,60 @@ def generate_trajectory(x_test, s_test, stim, vae, neuromod, noise_scale=1.0, si
         u = stim.unsqueeze(0) 
     
     # Retrieve initial latent state by projecting x onto z
-    z_hat, _, _, _ = vae.encoder(x_test.unsqueeze(0))
-    z0 = z_hat[:, :, 0].squeeze()
+    #z_hat, _, _, _ = vae.encoder(x_test.unsqueeze(0))
+
+    # actually better to sample initial state from the posterior
+    prior_mean = vae.rnn.get_initial_state(u[:, :, 0],stim[:,:1]).unsqueeze(-1)
+    prior_mean = prior_mean.expand(*prior_mean.shape[:2], k)
+    if initial_state=="prior_sample":
+        z0 = prior_mean
+    else:
+        eff_var_x = torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), 1e-8)
+        eff_var_prior_t0_chol = chol_cov_embed(vae.rnn.R_z_t0)
+
+        # Get the observation weights and bias
+        vae.rnn.params['readout_from']='currents'
+        if vae.rnn.params["readout_from"] == "currents":
+            m = vae.rnn.transition.m
+            #print(m.shape)
+            #print( vae.rnn.observation.B.unsqueeze(-1).shape)
+            B = vae.rnn.observation.B@ m[:vae.dim_x]
+            B = B.T
+        elif vae.rnn.params["readout_from"] == "z_and_v":
+            B = vae.rnn.observation.B[vae.dim_u:]
+            Bu = vae.rnn.observation.B[:vae.dim_u]
+        else:
+            B = vae.rnn.observation.B
+
+        Obs_bias = vae.rnn.observation.Bias.view(1, -1, 1)
+
+        # set Kalman update function
+        if vae.dim_x < vae.dim_z * 4:
+            kalman_update = Kalman_update_highD
+        else:
+            kalman_update = Kalman_update_lowD
+        alpha, one_min_alpha, Kalman_gain, var_Q_cholesky = kalman_update(
+            eff_var_prior_t0_chol, B, eff_var_x
+        )
+        #print("x shape ", x.shape)
+        mean_Q = torch.einsum(
+            "zs,BsK->BzK", one_min_alpha, prior_mean
+        ) + torch.einsum(
+            "zx,BxK->BzK", Kalman_gain, x_test[:, 0].unsqueeze(0).unsqueeze(-1) - Obs_bias
+        )
+        #print(mean_Q.shape)
+        #print(var_Q_cholesky.shape)
+        if initial_state == "posterior_sample":
+            Q_dist = torch.distributions.MultivariateNormal(
+                loc=mean_Q.permute(0, 2, 1), scale_tril=var_Q_cholesky
+            )
+            z0 = Q_dist.sample().permute(0, 2, 1)
+
+        elif initial_state == "posterior_mean":
+            z0 = mean_Q
+    z_hat = z0
+        #print(z_hat.shape)
+        #z0 = z_hat[:, :, 0].squeeze()
     if stim is not None:
         sim_v = True
     else:

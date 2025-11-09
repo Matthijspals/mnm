@@ -111,7 +111,7 @@ def evaluate(vae,
 
 if __name__ == '__main__':
     config = {
-        "rank": 3,
+        "rank": 4,
         "z_score_neuromod": False,
         "z_score_neurons": False, 
         "min_max_norm_neuromod": True,
@@ -124,7 +124,7 @@ if __name__ == '__main__':
         'center_neuromod': False,
         'load_physiology': False, 
         "sim_s": True, 
-        "sim_v": False, 
+        "sim_v": True, 
         "sampling_rate": 30_000, 
         "data_dir": "data/recordings/nk339_mPFC/",
         "out_dir": "results/model_evals/",
@@ -141,16 +141,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='eval')
     parser.add_argument('-n', '--neuromodulation', help='Neuromodulation type', default='postsynaptic')
     parser.add_argument('-d', '--dataset', help='Dataset type',default='nk339_mPFC')
-    parser.add_argument('-r', '--rank', help='Rank of network',default=3)
+    parser.add_argument('-r', '--rank', help='Rank of network',default=4)
     parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control', default=False)
     parser.add_argument('-k', '--particles', help='Number of particles', default=64)
     parser.add_argument('-t', '--stim', help='Add stimuli', default=True)
     parser.add_argument('-a', '--activation', help='Activation function', default='clipped_relu')
     parser.add_argument('-l', '--dales_law', help='Apply Dale\'s law', default=False)
     parser.add_argument('-z', '--bin_size', help='Bin size', default=0.05)
-
+    parser.add_argument('-seed', '--seed', help='Random seed', default=0)
     args = parser.parse_args() 
-
+    #print(args.seed)
     config["neuromodulation"] = args.neuromodulation 
     if 'stim' in config["neuromodulation"]: 
         config["neuromodulation"] = config["neuromodulation"].split('_')[0]
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     was_dists = [] # wasserstein distances 
     r_vals = [] # R values for stimulus trials 
    
-    for seed in range(0, 1):
+    for seed in [args.seed]:#range(0, 1):
         vae, params, task_params, training_params = load_model(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}')
         
         stat_dict = evaluate(vae, 

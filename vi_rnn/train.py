@@ -312,10 +312,10 @@ def train_VAE(
                     "noise_x": noise_x.mean().item(),
                     "noise_e": torch.exp(vae.encoder.logvar / 2).mean().item(),
                     "lr": scheduler.get_last_lr()[0],
-                    "unique_particles": unique_particles[-1],
-                    "determinant prior cov": det_prior,
-                    "determinant observation cov": det_obs,
-                    "determinant posterior cov": det_posterior
+                    #"unique_particles": unique_particles[-1],
+                    #"determinant prior cov": det_prior,
+                    #"determinant observation cov": det_obs,
+                    #"determinant posterior cov": det_posterior
                 }
             )
 
