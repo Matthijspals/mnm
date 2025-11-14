@@ -38,18 +38,18 @@ if __name__ == '__main__':
         "bs": 32, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 1000,
+        "epochs": 750,
         "shuffle": False,
         "k": 64,
         "dales_law": False,
-        "activation": "clipped_relu",
+        "activation": "relu",
         "learning_rate": 1e-3,
         "load_physiology": False,
         "seed": None,
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, #what is the right setting for this
-        "ed_ratio": 0.5,
+        "ed_ratio": 0.,
         'center_data': True
     }
 
@@ -122,16 +122,16 @@ if __name__ == '__main__':
         
         # initialise prior
         rnn_params = {
-            "clipped": True,
+            "clipped": False,
             "train_noise_x": True,  # False
             "train_noise_z": True,
             "train_noise_z_t0": True,
             "init_noise_z": 0.1,
             "init_noise_z_t0": 0.1,
             "init_noise_x": 0.1,
-            "scalar_noise_z":"Cov",# "Cov",
+            "scalar_noise_z":False,#"Cov",# "Cov",
             "scalar_noise_x": False,
-            "scalar_noise_z_t0": "Cov",#"Cov",
+            "scalar_noise_z_t0": False,#"Cov",#"Cov",
             "identity_readout": True,
             "activation": config["activation"],
             "exp_par": True,
@@ -144,7 +144,7 @@ if __name__ == '__main__':
             "orth": False,
             "m_norm": False,
             "weight_dist": "uniform",
-            "weight_scaler": 4,  # /dim_N,
+            "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
             "out_nonlinearity": "identity",# "softplus",
             "neuromodulation": config["neuromodulation"], 
@@ -174,7 +174,7 @@ if __name__ == '__main__':
             "k": config["k"],
             "sim_v": config["sim_v"],
             "sim_s": config["sim_s"],
-            "loss_f": "opt_VGTF",
+            "loss_f": "VGTF",
             "resample": "systematic",  # , multinomial or none"
             "observation_likelihood": "Gauss",  # observation likelihood,
             "neuromodulation": config["neuromodulation"],
@@ -189,9 +189,9 @@ if __name__ == '__main__':
         
 
         enc_params ={
-            "init_kernel_sizes": [14, 4, 2],
+            "init_kernel_sizes": [4, 2, 2],
             "nonlinearity": "gelu",
-            "n_channels": [128, 64],
+            "n_channels": [32, 16],
             "init_scale": 0.05,
             "padding_location": "acausal",
             "constant_var": False,
@@ -204,7 +204,7 @@ if __name__ == '__main__':
             "dim_u": dim_u if config['sim_v'] else 0,
             "dim_N": dim_N,
             "dim_s": dim_s,
-            "enc_architecture": "Inv_Obs",#CNN", #CNN
+            "enc_architecture": "CNN",#Inv_Obs",#CNN", #CNN
             "enc_params": enc_params,
             "prior_architecture": "PLRNN",
             "rnn_params": rnn_params,

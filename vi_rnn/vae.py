@@ -405,7 +405,8 @@ class VAE(nn.Module):
         )
 
     def forward_VGTF(
-        self, x, s=None, u=None, k=1, resample=False, out_likelihood="Gauss", t_forward=0, sim_v=False, sim_s=False
+        self, x, s=None, u=None, k=1, resample=False, out_likelihood="Gauss", t_forward=0, sim_v=False, sim_s=False, ed_ratio=0.0,
+
     ):
         """
         Forward pass of the VAE
@@ -452,6 +453,12 @@ class VAE(nn.Module):
         Esample, Emean, log_Evar, eps_sample = self.encoder(
             x[:, : self.dim_x, : x.shape[2] - t_forward], k=k
         )  # Bs,Dx,T,K
+        bs, dim_z, time_steps, _ = Emean.shape
+        # Create encoder dropout mask
+        if ed_ratio>0:
+            ed_mask = torch.rand(bs, time_steps, device=x.device) > ed_ratio
+        else: 
+            ed_mask = torch.ones(1, time_steps, device=x.device)
 
         # Project and clamp the variances
         Evar = torch.clamp(torch.exp(log_Evar), min=self.min_var, max=self.max_var)
@@ -590,12 +597,12 @@ class VAE(nn.Module):
             # Calculate the posterior mean and covariance
             precZ = 1 / eff_var_prior
             precE = 1 / Evar[:, :, t]
-            precQ = precZ + precE
+            precQ = precZ + precE * ed_mask[:,t].view(-1,1,1)
             alpha = precE / precQ
             alphas.append(alpha)
-            mean_Q = (1 - alpha) * prior_mean + alpha * Emean[:, :, t]
+            #mean_Q = (1 - alpha) * prior_mean + alpha * Emean[:, :, t]
             eff_var_Q = 1 / precQ
-
+            mean_Q = (precZ * prior_mean + precE * Emean[:, :, t]) * eff_var_Q
             # Sample from the posterior and calculate likelihood
             Q_dist = torch.distributions.Normal(loc=mean_Q, scale=torch.sqrt(eff_var_Q))
             Qz = Q_dist.rsample()

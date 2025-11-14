@@ -155,7 +155,7 @@ class LRRNN(nn.Module):
         # initialise the observation step, either readout from the latent states, or from the neuron activity
         if self.readout_rates == "rates":
             self.observation = Observation(
-                self.d_z,
+                self.d_N,
                 self.d_x,
                 train_bias=params["train_obs_bias"],
                 train_weights=params["train_obs_weights"],
@@ -353,7 +353,7 @@ class LRRNN(nn.Module):
 
     def get_rates(self, z, u=None, s=None):
         """transform the latent states to the neuron activity"""
-        R = self.transition.get_rates(z, u=u, s=s)
+        R = self.transition.get_rates(z, v=u, s=s)
         return R
 
     def get_observation(self, z, v=None, s=None, noise_scale=0):

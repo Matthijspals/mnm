@@ -224,7 +224,9 @@ def train_VAE(
                         t_forward=training_params["t_forward"],
                         s=s,
                         sim_v=training_params["sim_v"],
-                        sim_s=training_params["sim_s"]
+                        sim_s=training_params["sim_s"],
+                        ed_ratio=training_params["ed_ratio"]
+
                     )
                 )
             batch_ll += log_likelihood.mean().item()
