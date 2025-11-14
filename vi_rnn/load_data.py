@@ -1,7 +1,8 @@
 import os 
 import pandas as pd
 import numpy as np
-from scipy.signal import convolve, gaussian, decimate
+from scipy.signal import convolve, decimate
+from scipy.signal.windows import gaussian
 
 def bin_spike_train(spike_times, t_start, t_end, bin_size):
     """

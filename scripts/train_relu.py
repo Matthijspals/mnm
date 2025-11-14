@@ -49,7 +49,7 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, #what is the right setting for this
-        "ed_ratio": 0.,
+        "ed_ratio": 0.5,
         'center_data': True
     }
 

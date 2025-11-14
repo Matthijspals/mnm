@@ -598,7 +598,7 @@ class VAE(nn.Module):
             precZ = 1 / eff_var_prior
             precE = 1 / Evar[:, :, t]
             precQ = precZ + precE * ed_mask[:,t].view(-1,1,1)
-            alpha = precE / precQ
+            alpha = precE / (precZ + precE)
             alphas.append(alpha)
             #mean_Q = (1 - alpha) * prior_mean + alpha * Emean[:, :, t]
             eff_var_Q = 1 / precQ
