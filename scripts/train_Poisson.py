@@ -23,7 +23,7 @@ if __name__ == '__main__':
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
         "deconvolve": False, 
-        "convolve_spikes": True, 
+        "convolve_spikes": False, 
         "neuromodulation": "postsynaptic",
         "dataset": "nk339_mPFC",
         "normalize_neuromod": True, 
@@ -138,9 +138,9 @@ if __name__ == '__main__':
             "shared_tau": config["shared_tau"],
             "readout_rates": "rates",
             "train_obs_bias": False,
-            "train_obs_weights": True, 
+            "train_obs_weights": False, 
             "train_latent_bias": False,
-            "train_neuron_bias": True, # TODO: return to True
+            "train_neuron_bias": True, 
             "orth": False,
             "m_norm": False,
             "weight_dist": "uniform",
@@ -176,7 +176,7 @@ if __name__ == '__main__':
             "sim_s": config["sim_s"],
             "loss_f": "VGTF",
             "resample": "systematic",  # , multinomial or none"
-            "observation_likelihood": "Gauss",  # observation likelihood,
+            "observation_likelihood": "Poisson",  # observation likelihood,
             "neuromodulation": config["neuromodulation"],
             "ed_ratio": config["ed_ratio"]
         }
@@ -189,13 +189,13 @@ if __name__ == '__main__':
         
 
         enc_params ={
-            "init_kernel_sizes": [4, 2, 2],
+            "init_kernel_sizes": [12, 6, 2],
             "nonlinearity": "gelu",
             "n_channels": [32, 16],
             "init_scale": 0.05,
             "padding_location": "acausal",
             "constant_var": False,
-            "padding_mode": "constant"  # reflect #reflect # constant reflect replicate or circular
+            "padding_mode": "circular"  # reflect #reflect # constant reflect replicate or circular
         }
 
         VAE_params = {

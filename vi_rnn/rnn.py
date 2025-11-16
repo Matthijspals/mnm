@@ -474,7 +474,7 @@ class Observation(nn.Module):
         elif out_nonlinearity == "softplus":
             self.nonlinearity = torch.nn.functional.softplus
         elif out_nonlinearity == "identity":
-            self.nonlinearity = lambda x: x
+            self.nonlinearity = lambda x: x  + 1e-10
 
     def forward(self, z):
         """
