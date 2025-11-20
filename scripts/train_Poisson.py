@@ -18,7 +18,7 @@ CUDA = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 12,
+        "rank": 6,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -38,7 +38,7 @@ if __name__ == '__main__':
         "bs": 32, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 750,
+        "epochs": 1250,
         "shuffle": False,
         "k": 64,
         "dales_law": False,
