@@ -426,6 +426,7 @@ def prepare_dataset(spike_counts, neuromod_activity, trials_df, config, test=Fal
         x += reward_trials_x[:4]
         s += reward_trials_s[:4]
         stim_arr += reward_trials_stim[:4]
+    print(len(x))
 
     x = np.hstack(x)
     s = np.hstack(s) 

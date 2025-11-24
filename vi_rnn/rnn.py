@@ -261,7 +261,7 @@ class LRRNN(nn.Module):
         return z, v, s_tilde
 
     def get_latent_time_series(
-        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None, sim_v=True, sim_s=False
+        self, time_steps=1000, cut_off=0, noise_scale=1, z0=None, u=None, s=None, sim_v=True, sim_s=False,k=1
     ):
         """
         Generate a latent time series of length time_steps
@@ -280,13 +280,11 @@ class LRRNN(nn.Module):
             V = []
             S = []
             if z0 is None:
-                z = torch.randn(1, self.d_z, 1, 1, device=self.R_x.device)
+                z = torch.randn(1, self.d_z, 1, k, device=self.R_x.device)
             else:
-                if len(z0.shape)<=1 or z0.shape[0] == 1:  # only z dimension is given
-                    z = z0.to(device=self.R_x.device).reshape(1, self.d_z, 1, 1)
-                elif len(z0.shape) < 4:  # trial and z dimension is given
+                if len(z0.shape) < 4:  # trial and z dimension is given
                     z = z0.to(device=self.R_x.device).reshape(
-                        z0.shape[0], self.d_z, 1, 1
+                        z0.shape[0], self.d_z, 1, k
                     )
                 else:
                     z = z0.to(device=self.R_x.device)

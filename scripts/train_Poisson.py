@@ -18,7 +18,7 @@ CUDA = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 6,
+        "rank": 12,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -48,8 +48,8 @@ if __name__ == '__main__':
         "seed": None,
         "shared_tau": 0.9,
         "train_alpha": True,
-        "stim":True, #what is the right setting for this
-        "ed_ratio": 0.5,
+        "stim":True, 
+        "ed_ratio": .75,
         'center_data': False
     }
 

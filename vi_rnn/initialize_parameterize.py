@@ -3,6 +3,35 @@ import torch.nn as nn
 import numpy as np
 
 
+def chol_cov_embed(x):
+    """
+    Positive semi-definite embedding of a vector as a lower triangular matrix
+    """
+    chol_cov = torch.tril(x, diagonal=-1) + torch.diag_embed(
+        torch.exp(x[range(x.shape[0]), range(x.shape[0])] / 2)
+    )
+    return chol_cov
+
+
+def inverse_chol_cov_embed(x):
+    """
+    such that x = chol_cov_embed(inverse_chol_cov_embed(x))
+    for x a lower triangular matrix
+    """
+    return torch.diag_embed(
+        torch.log(x[range(x.shape[0]), range(x.shape[0])])
+    ) * 2 + torch.tril(x, diagonal=-1)
+
+
+def full_cov_embed(x):
+    """
+    Return positive semi-definite matrix
+    """
+
+    cov = chol_cov_embed(x) @ (chol_cov_embed(x).T)
+    return cov
+
+
 def init_AW(dz):
     """Talathi & Vartak 2016: Improving Performance of Recurrent Neural Network with ReLU Nonlinearity
     code  adapted from https://github.com/DurstewitzLab/dendPLRNN"""
