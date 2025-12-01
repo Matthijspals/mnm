@@ -7,6 +7,9 @@ sys.path.append(file_dir)
 import torch
 import numpy as np
 
+from scipy.signal import convolve
+from scipy.signal.windows import gaussian 
+
 from evaluation.kl_Gauss import calc_kl_from_data
 from evaluation.pse import power_spectrum_helling
 
@@ -16,7 +19,7 @@ import scipy.signal as signal
 from scipy.optimize import linear_sum_assignment
 
 from vi_rnn.utils import generate_trajectory 
-
+from vi_rnn.generate import * 
 
 def predict_X(
         vae, 
@@ -283,7 +286,9 @@ def compute_R(vae,
               population_trial_avgs,
               trial_type, 
               seq_periods, 
-              num_trajs=10):
+              num_trajs=10,
+              sim_s=False,
+              obs='gauss'):
     """
     Computes the correlation coefficient (R) between the averaged stimulus response 
     and averaged activity over trials
@@ -308,16 +313,75 @@ def compute_R(vae,
     else: 
         trial_block = [8, 11]
 
-    # average neural activity across trials 
-    trajs_gen = [generate_trajectory(x_test[:, seq_periods[j][0]:seq_periods[j][1]],
-                                s_test[seq_periods[j][0]:seq_periods[j][1]],
-                                None if stim_arr_test is None else stim_arr_test[:, seq_periods[j][0]:seq_periods[j][1]],
-                                vae, 
-                                neuromodulation
-                                )[1] for i in range(num_trajs) for j in range(trial_block[0], trial_block[1])]
-    avg_trajs_gen = torch.stack(trajs_gen).mean(axis=0)
-    r = pearsonr(avg_trajs_gen.flatten(), population_trial_avgs.flatten())[0]
-    return r
+    trial_avgs = []
+    for j in range(trial_block[0], trial_block[1]):
+        trial_trajs = []
+        for i in range(num_trajs):
+            dur = x_test[:, seq_periods[j][0]:seq_periods[j][1]].shape[1]
+            #TODO: For now pass an empty array but correct later 
+            stim_arr_test = torch.zeros(9, dur).unsqueeze(0)
+            if obs == 'poisson':
+                _, _, lmd = generate(vae, 
+                                x_test[:, seq_periods[j][0]:seq_periods[j][1]], 
+                                s_test[seq_periods[j][0]:seq_periods[j][1]].view(1, 1, -1), 
+                                stim_arr_test, 
+                                dur, 
+                                sim_s=sim_s)
+                lmd = lmd.reshape(x_test.shape[0], -1) 
+                spikes_pred = torch.poisson(lmd) 
+                traj_gen = []
+
+                kernel_size = 25 
+                sigma = 5 
+                gaussian_kernel = gaussian(kernel_size, sigma)
+
+                for n in range(spikes_pred.shape[0]):
+
+                    original_length = x_test[n].shape[0]
+                    padded = torch.nn.functional.pad(spikes_pred[n],
+                                        (kernel_size - 1, 0),
+                                        mode='constant',
+                                        value=0)
+                    # Convolve and take only the 'valid' part (no future context)
+                    smoothed = convolve(padded.numpy(), gaussian_kernel, mode='valid')[:original_length]
+                    traj_gen.append(smoothed)
+                traj_gen = torch.tensor(traj_gen).to(torch.float32)
+                traj_gen = traj_gen - traj_gen.mean(axis=1, keepdims=True)
+            else:     
+                _, _, traj_gen = generate(
+                    vae,
+                    x_test[:, seq_periods[j][0]:seq_periods[j][1]],
+                    s_test[seq_periods[j][0]:seq_periods[j][1]].view(1, 1, -1),
+                    stim_arr_test, 
+                    dur, 
+                    sim_s=sim_s 
+                )
+                traj_gen = traj_gen.reshape(x_test.shape[0], -1)
+
+            trial_trajs.append(traj_gen)
+        trial_trajs = torch.stack(trial_trajs).mean(axis=0)
+        trial_avgs.append(trial_trajs)
+    trial_avgs = torch.stack(trial_avgs).mean(axis=0)
+
+    # compute R and R^2 
+    num = torch.sum(population_trial_avgs * trial_avgs, dim=1)
+    den = torch.sqrt(torch.sum(population_trial_avgs**2, dim=1) * torch.sum(trial_avgs**2, dim=1))
+        # select only nonzero-denominator values
+    valid = den != 0
+    r = (num[valid] / den[valid])
+        
+    y_mean = population_trial_avgs.mean(dim=1, keepdim=True)
+    ss_tot = torch.sum((population_trial_avgs - y_mean)**2, dim=1)
+    ss_res = torch.sum((population_trial_avgs - trial_avgs)**2, dim=1)
+    valid = ss_tot != 0
+    r2 = 1 - ss_res[valid] / ss_tot[valid]
+
+    r_mean  = r.mean()
+    r_std   = r.std()
+    r2_mean = r2.mean()
+    r2_std  = r2.std()
+    print(r_mean, r_std, r2_mean, r2_std)
+    return r_mean, r_std, r2_mean, r2_std
 
 
 def compute_KL_divergence(pred_trajectories, x, n_samples=2000):

@@ -5,6 +5,13 @@ import numpy as np
 import time
 import os
 
+from vi_rnn.generate import * 
+from vi_rnn.evaluation import *
+
+import matplotlib.pyplot as plt 
+from scipy.signal import convolve
+from scipy.signal.windows import gaussian 
+
 os.environ["WANDB__SERVICE_WAIT"] = "1000"
 import sys
 from vi_rnn.evaluation import eval_VAE, predict_X, compute_KL_divergence
@@ -98,6 +105,10 @@ def train_VAE(
             eval_task, batch_size=training_params["batch_size"], shuffle=True
         )
 
+    x_test_baseline = training_params["x_test_baseline"].to(device=device)
+    s_test_baseline = training_params["s_test_baseline"].to(device=device).view(1, 1, -1)
+    stim_arr_test_baseline = training_params["stim_arr_test_baseline"].to(device=device).unsqueeze(0)
+
     # initialize wandb
     if sync_wandb:
         wandb.init(
@@ -130,32 +141,92 @@ def train_VAE(
 
     for i in range(curr_epoch, training_params["n_epochs"]):
         with torch.no_grad():
-            if i % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
+            if (i+1) % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
                 vae.eval()
-                with torch.no_grad(): 
-                    klx_bin, psH, mean_rate_error = eval_VAE(
-                        vae,
-                        task,
-                        cut_off=0,
-                        smoothing=training_params["smoothing"],
-                        freq_cut_off=training_params["freq_cut_off"],
-                        sim_obs_noise=training_params["sim_obs_noise"],
-                        sim_latent_noise=training_params["sim_latent_noise"],
-                        smooth_at_eval=training_params["smooth_at_eval"],
-                        neuromodulation=training_params["neuromodulation"]
-                    )
-                    training_params["KL_x"].append(klx_bin)
-                    training_params["PSH"].append(psH)
-                    training_params["mean_error"].append(mean_rate_error)
 
-                    if sync_wandb:
-                        wandb.log(
-                            {
-                                "KL Div": klx_bin,
-                                "power_spectr_distance": psH,
-                                "mean_rate_error": mean_rate_error,
-                            }
-                        )
+                num_samples, num_trajs = 3000, 1 
+                kl_divs = []
+                mres = [] 
+                for j in range(num_trajs): 
+                    # generate trajectory 
+                    # print('generating trajectory')
+                    _, _, lmd = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=training_params["sim_s"])
+                    # lmd = generate_trajectory(x_test_baseline, s_test_baseline, None, vae, training_params["neuromodulation"], sim_s=training_params["sim_s"])[1]
+                    lmd = lmd.reshape(x_test_baseline.shape[0], -1)
+                    spikes_pred = torch.poisson(lmd)
+                    if j == 0: 
+                        fig, ax = plt.subplots(1,2, figsize=(4, 3))
+                        # log spikes to wandb 
+                        ax[0].imshow(x_test_baseline[:, :num_samples].cpu(), aspect='auto', cmap='Greys', interpolation="none", vmax=1)
+                        ax[1].imshow(spikes_pred[:, :num_samples].cpu(), aspect='auto', cmap='Greys', interpolation="none", vmax=1)
+                        wandb.log({"traces": fig})
+
+                    # convolve and then mean-center the spikes for comparison 
+                    kernel_size = 25
+                    sigma = 5 
+
+                    gaussian_kernel = gaussian(kernel_size, sigma) 
+                    gaussian_kernel /= gaussian_kernel.sum() 
+                    smoothed_spikes, smoothed_spikes_pred = [], []
+                    for n in range(x_test_baseline.shape[0]): 
+                        smoothed_spikes.append(convolve(x_test_baseline[n].cpu(), gaussian_kernel, mode='full'))
+                        smoothed_spikes_pred.append(convolve(spikes_pred[n].cpu(), gaussian_kernel, mode='full'))
+                   
+                    smoothed_spikes = np.array(smoothed_spikes)
+                    smoothed_spikes_pred = np.array(smoothed_spikes_pred)
+
+                    smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=1, keepdims=True)
+                    smoothed_spikes_pred = smoothed_spikes_pred - smoothed_spikes_pred.mean(axis=1, keepdims=True) 
+                    if j == 0:
+                        fig, ax = plt.subplots(3, 1, figsize=(10, 8))
+                        ax[0].plot(smoothed_spikes_pred[0, :200]) 
+                        ax[0].plot(smoothed_spikes[0, :200])
+
+                        ax[1].plot(smoothed_spikes_pred[90, :200]) 
+                        ax[1].plot(smoothed_spikes[90, :200])
+
+                        ax[2].plot(smoothed_spikes_pred[111, :200]) 
+                        ax[2].plot(smoothed_spikes[111, :200])
+                        wandb.log({"traces smoothed": fig})
+                    mre = mean_rate(smoothed_spikes_pred, smoothed_spikes)
+
+                    smoothed_spikes = torch.from_numpy(smoothed_spikes).to(torch.float32).to(device=device)
+                    smoothed_spikes_pred = torch.from_numpy(smoothed_spikes_pred).to(torch.float32).to(device=device)
+                    print(smoothed_spikes.shape, smoothed_spikes_pred.shape)
+                    kl_div = compute_KL_divergence(smoothed_spikes_pred.unsqueeze(0), smoothed_spikes.unsqueeze(0), n_samples=num_samples)
+                    kl_divs.append(kl_div)
+                    mres.append(mre)
+                
+                kl_divs = np.array(kl_divs)
+                mres = np.array(mres)
+                wandb.log({
+                    "kl_div": kl_divs.mean(),
+                    "mres": mres.mean()
+                })
+                # with torch.no_grad(): 
+                #     klx_bin, psH, mean_rate_error = eval_VAE(
+                #         vae,
+                #         task,
+                #         cut_off=0,
+                #         smoothing=training_params["smoothing"],
+                #         freq_cut_off=training_params["freq_cut_off"],
+                #         sim_obs_noise=training_params["sim_obs_noise"],
+                #         sim_latent_noise=training_params["sim_latent_noise"],
+                #         smooth_at_eval=training_params["smooth_at_eval"],
+                #         neuromodulation=training_params["neuromodulation"]
+                #     )
+                #     training_params["KL_x"].append(klx_bin)
+                #     training_params["PSH"].append(psH)
+                #     training_params["mean_error"].append(mean_rate_error)
+
+                #     if sync_wandb:
+                #         wandb.log(
+                #             {
+                #                 "KL Div": klx_bin,
+                #                 "power_spectr_distance": psH,
+                #                 "mean_rate_error": mean_rate_error,
+                #             }
+                #         )
 
                         # plot latent time series and reconstructions
                         # with torch.no_grad():

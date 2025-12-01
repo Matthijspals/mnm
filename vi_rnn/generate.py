@@ -50,13 +50,13 @@ def get_initial_state(
             eff_var_prior_t0_chol = chol_cov_embed(vae.rnn.R_z_t0)
 
             # Get the observation weights and bias
-            if vae.rnn.params["readout_from"] == "currents":
+            if vae.rnn.params["readout_rates"] == "currents":
                 m = vae.rnn.transition.m
                 #print(m.shape)
                 #print( vae.rnn.observation.B.unsqueeze(-1).shape)
                 B = vae.rnn.observation.B.unsqueeze(-1) * m[:vae.dim_x]
                 B = B.T
-            elif vae.rnn.params["readout_from"] == "z_and_v":
+            elif vae.rnn.params["readout_rates"] == "z_and_v":
                 B = vae.rnn.observation.B[vae.dim_u:]
                 Bu = vae.rnn.observation.B[:vae.dim_u]
             else:
@@ -182,7 +182,7 @@ def generate(
             if len(s.shape) == 2:
                 s = s.unsqueeze(0)  # add trial dim if not used
         s0 = s[:, :, 0]
-        print (u.shape, s0.shape, s.shape)
+        # print (u.shape, s0.shape, s.shape)
         if isinstance(initial_state, str):
             with torch.no_grad():
                 z0 = get_initial_state(

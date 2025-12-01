@@ -23,7 +23,8 @@ if __name__ == '__main__':
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
         "deconvolve": False, 
-        "convolve_spikes": True, 
+        "convolve_spikes": True,
+        "zero_pad": True, 
         "neuromodulation": "postsynaptic",
         "dataset": "nk341_mPFC",
         "normalize_neuromod": True, 
@@ -40,6 +41,7 @@ if __name__ == '__main__':
         "fr_threshold": 0.5,
         "epochs": 300,
         "shuffle": False,
+        "shift": 0,
         "k": 64,
         "dales_law": False,
         "activation": "clipped_relu",
@@ -47,7 +49,10 @@ if __name__ == '__main__':
         "load_physiology": False,
         "seed": None,
         "shared_tau": 0.9,
-        "train_alpha": True
+        "train_alpha": True,
+        "stim": True, 
+        "ed_ratio": .5, 
+        "center_data": True
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -65,6 +70,7 @@ if __name__ == '__main__':
     parser.add_argument('-z', '--bin_size', help='Bin size')
     parser.add_argument('-y', '--learning_rate', help='Learning rate')
     parser.add_argument('-c', '--tau', help='Time constant')
+    parser.add_argument('-i', '--shift', help='Neuromod shift')
 
     args = parser.parse_args() 
     print('args = ')
@@ -72,7 +78,6 @@ if __name__ == '__main__':
     if args.neuromodulation is not None: 
         config["neuromodulation"] = args.neuromodulation 
         if 'stim' in config["neuromodulation"]: 
-            print(f'1 setting to true')
             config["neuromodulation"] = config["neuromodulation"].split('_')[0]
             config["sim_v"] = True 
         if args.stim is not None and args.stim == 'True':
@@ -84,6 +89,8 @@ if __name__ == '__main__':
         config["sim_s"] = True 
     if args.dataset is not None: 
         config["dataset"] = args.dataset 
+    if args.shift is not None: 
+        config["shift"] = int(args.shift) 
 
     if config["dataset"] == "nk340_mPFC": 
         config["data_dir"] = "data/recordings/nk340_mPFC/"
@@ -142,6 +149,8 @@ if __name__ == '__main__':
     # split into 75% train and 25% test samples. The tail end of the data will be used for training
     config['baseline_train_start'] = int(data_dur - 0.75 * baseline_dur)
     config['baseline_train_end'] = int(data_dur) 
+    config['baseline_test_start'] = int(data_dur - baseline_dur)
+    config['baseline_test_end'] = int(data_dur - 0.75 * baseline_dur)
 
     print(f'Data duration: {data_dur} seconds')
     print(f'Baseline data duration: {baseline_dur} seconds')
@@ -150,9 +159,25 @@ if __name__ == '__main__':
     
     # prepare dataset 
     x_train, s_train, stim_arr_train, seq_periods, _, _, _ = prepare_dataset(spike_counts, neuromod_activity, trials_df, config, test=False, time_delta=15)
+    x_test, s_test, stim_arr_test, seq_periods_test, _, _, _ = prepare_dataset(spike_counts, 
+                                                                                neuromod_activity,
+                                                                                trials_df, 
+                                                                                config,
+                                                                                test=True)    
+    s_test = (s_test - s_train.min()) / (s_train.max() - s_train.min())
+    x_test_baseline = x_test[:, seq_periods_test[0][0]: seq_periods_test[0][1]]
+    s_test_baseline = s_test[seq_periods_test[0][0]: seq_periods_test[0][1]]
+    x_test_baseline = torch.from_numpy(x_test_baseline).to(torch.float32) 
+    s_test_baseline = torch.from_numpy(s_test_baseline).to(torch.float32)
+    stim_arr_test_baseline = torch.from_numpy(stim_arr_test[:, seq_periods_test[0][0]: seq_periods_test[0][1]]).to(torch.float32)
+    
     # normalize neuromodulators 
     if config["z_score_neuromod"] == False and config["min_max_norm_neuromod"]:
         s_train = (s_train - s_train.min()) / (s_train.max() - s_train.min()) 
+
+    print(f'Shifting neuromodulator signal by {config["shift"]}')
+    s_train = np.roll(s_train, config["shift"])
+    s_test = np.roll(s_test, config["shift"])
 
     # train models 
     if config["seed"] is not None:
@@ -245,7 +270,11 @@ if __name__ == '__main__':
             "loss_f": "opt_VGTF",
             "resample": "systematic",  # , multinomial or none"
             "observation_likelihood": "Gauss",  # observation likelihood,
-            "neuromodulation": config["neuromodulation"]
+            "neuromodulation": config["neuromodulation"],
+            "ed_ratio": config["ed_ratio"],
+            "x_test_baseline": x_test_baseline, 
+            "s_test_baseline": s_test_baseline,
+            "stim_arr_test_baseline": stim_arr_test_baseline
         }
         
         dim_x = task.data.shape[1]
@@ -269,8 +298,8 @@ if __name__ == '__main__':
         }
         vae = VAE(VAE_params)
 
-        fname = f'{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}'
-
+        fname = f'{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_gauss_shift_{config["shift"]}'
+        
         train_VAE(vae, 
             training_params, 
             task, 

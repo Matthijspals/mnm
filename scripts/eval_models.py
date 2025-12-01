@@ -14,7 +14,10 @@ from vi_rnn.utils import *
 from vi_rnn.load_data import * 
 from vi_rnn.evaluation import * 
 from vi_rnn.saving import load_model 
+from vi_rnn.generate import * 
 
+from scipy.signal import convolve
+from scipy.signal.windows import gaussian 
 
 import pickle
 
@@ -58,8 +61,9 @@ def evaluate(vae,
     stat_dict = {}
     # first we compute state-space metrics for baseline period
     x_test_baseline = x_test[:, seq_periods[0][0]: seq_periods[0][1]]
-    s_test_baseline = s_test[seq_periods[0][0]: seq_periods[0][1]]
-    stim_arr_test_baseline = stim_arr_test[:, seq_periods[0][0]: seq_periods[0][1]] # bunch of zeros 
+    s_test_baseline = s_test[seq_periods[0][0]: seq_periods[0][1]].view(1, 1, -1)
+    stim_arr_test_baseline = stim_arr_test[:, seq_periods[0][0]: seq_periods[0][1]].unsqueeze(0) # bunch of zeros 
+
     if use_stim == False: 
         stim_arr_test_baseline = None 
         stim_arr_test = None 
@@ -71,7 +75,41 @@ def evaluate(vae,
     for i in range(num_trajs):
         # generate trajectory 
         print('generating trajectory', flush=True)
-        traj_gen = generate_trajectory(x_test_baseline, s_test_baseline, stim_arr_test_baseline, vae, neuromodulation)[1]
+        # traj_gen = generate_trajectory(x_test_baseline, s_test_baseline, stim_arr_test_baseline, vae, neuromodulation)[1]
+        
+        # smooth if generating spikes 
+        if config["obs"] == "poisson": 
+            print(stim_arr_test_baseline.shape)
+            _, _, lmd = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=config["sim_s"])
+            lmd = lmd.reshape(x_test_baseline.shape[0], -1) 
+            spikes_pred = torch.poisson(lmd) 
+
+            kernel_size = 25 
+            sigma = 5 
+
+            gaussian_kernel = gaussian(kernel_size, sigma)
+            # Keep only the causal part (including the current time)
+            #gaussian_kernel[:kernel_size // 2] = 0
+            traj_gen = []
+            gaussian_kernel /= gaussian_kernel.sum()
+            for n in range(spikes_pred.shape[0]):
+                original_length = x_test_baseline[n].shape[0]
+                padded = torch.nn.functional.pad(spikes_pred[n],
+                                 (kernel_size - 1, 0),
+                                 mode='constant',
+                                 value=0)
+                # Convolve and take only the 'valid' part (no future context)
+                smoothed = convolve(padded.numpy(), gaussian_kernel, mode='valid')[:original_length]
+                traj_gen.append(smoothed)
+            traj_gen = torch.tensor(traj_gen).to(torch.float32)
+            # mean-center 
+            traj_gen = traj_gen - traj_gen.mean(axis=1, keepdims=True)
+
+        elif config["obs"] == "gauss": 
+            print(stim_arr_test_baseline.shape)
+            _, _, traj_gen = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=config["sim_s"])
+            traj_gen = traj_gen.reshape(x_test_baseline.shape[0], -1) 
+
         print('computing KL-div', flush=True)
         kl_div = compute_KL_divergence(traj_gen.unsqueeze(0), x_test_baseline.unsqueeze(0), n_samples=num_samples)
         print('computing wasserstein', flush=True)
@@ -95,16 +133,20 @@ def evaluate(vae,
     population_trial_avgs = [white_noise_trial_avgs, airpuff_trial_avgs, reward_trial_avgs]
     # Now we compute the R between the mean stimulus response and the mean actual activity over trials 
     for i, trial in enumerate(['white noise', 'airpuff', 'reward']):
-        r = compute_R(vae, 
+        r_mean, r_std, r2_mean, r2_std = compute_R(vae, 
                     neuromodulation, 
                     x_test, 
                     s_test, 
                     stim_arr_test, 
                     population_trial_avgs[i],
                     trial, 
-                    seq_periods)
-        stat_dict[f'R {trial}'] = r 
-        print(f'R {trial} = {r}')
+                    seq_periods,
+                    sim_s=config["sim_s"],
+                    obs=config["obs"])
+        stat_dict[f'R {trial} mean'] = r_mean.item() 
+        stat_dict[f'R {trial} std'] = r_std.item() 
+
+        # print(f'R {trial} = {r}')
 
     return stat_dict 
 
@@ -117,14 +159,15 @@ if __name__ == '__main__':
         "min_max_norm_neuromod": True,
         "deconvolve": False, 
         "convolve_spikes": True, 
-        "neuromodulation": "additive",
+        "zero_pad": True,
+        "neuromodulation": "postsynaptic",
 	    "activation": "clipped_relu",
         "dataset": "nk339_mPFC",
         "normalize_neuromod": True,
         'center_neuromod': False,
         'load_physiology': False, 
         "sim_s": True, 
-        "sim_v": True, 
+        "sim_v": False, 
         "sampling_rate": 30_000, 
         "data_dir": "data/recordings/nk339_mPFC/",
         "out_dir": "results/model_evals/",
@@ -135,7 +178,10 @@ if __name__ == '__main__':
         "epochs": 400,
         "shuffle": False,
         "k": 64,
-        "dales_law": False 
+        "dales_law": False,
+        'center_data': True,
+        "obs": "poisson",
+        "shift": 0, 
     }
 
     parser = argparse.ArgumentParser(description='eval')
@@ -149,6 +195,9 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--dales_law', help='Apply Dale\'s law', default=False)
     parser.add_argument('-z', '--bin_size', help='Bin size', default=0.05)
     parser.add_argument('-seed', '--seed', help='Random seed', default=0)
+    parser.add_argument('-obs', '--obs', help='Observation function', default=False)
+    parser.add_argument('--shift', help='Neuromodulator shift') 
+
     args = parser.parse_args() 
     #print(args.seed)
     config["neuromodulation"] = args.neuromodulation 
@@ -165,13 +214,19 @@ if __name__ == '__main__':
     if config["dataset"] == "nk340_mPFC": 
         config["data_dir"] = "data/recordings/nk340_mPFC/"
     elif config["dataset"] == "nk339_mPFC": 
-        config["data_dir"] = "data/nk339/"
+        config["data_dir"] = "data/recordings/nk339_mPFC/"
 
     if args.dales_law is not None:
         config["dales_law"] = bool(args.dales_law)
 
     if args.bin_size is not None: 
         config["bin_size"] = float(args.bin_size) 
+    
+    if args.obs is not None: 
+        config["obs"] = args.obs
+    
+    if args.shift is not None: 
+        config["shift"] = int(args.shift)
         
     config["rank"] = int(args.rank)
     if args.activation:
@@ -216,6 +271,10 @@ if __name__ == '__main__':
     if config["min_max_norm_neuromod"]:
         s_test = (s_test - s_train.min()) / (s_train.max() - s_train.min())
     
+    # Slide the trace by amount determined by config
+    s_train = np.roll(s_train, config["shift"])
+    s_test = np.roll(s_test, config["shift"])
+
     # convert to torch tensors 
     x_test = torch.from_numpy(x_test).to(torch.float32) 
     s_test = torch.from_numpy(s_test).to(torch.float32)
@@ -230,7 +289,7 @@ if __name__ == '__main__':
     r_vals = [] # R values for stimulus trials 
    
     for seed in [args.seed]:#range(0, 1):
-        vae, params, task_params, training_params = load_model(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}')
+        vae, params, task_params, training_params = load_model(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}')
         
         stat_dict = evaluate(vae, 
                             config["neuromodulation"], 
@@ -244,9 +303,11 @@ if __name__ == '__main__':
                             use_stim=config['sim_v'])
         
         # save dictionary as pickle 
-        result_dir = f'{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}/stat_dict.pkl'
+        result_dir = f'{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}/stat_dict.pkl'
         file_path = os.path.join(config["out_dir"], result_dir)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        print(f'saving results to: {result_dir}')
         with open(file_path, 'wb') as f:
             pickle.dump(stat_dict, f)
+        print('results saved')
             

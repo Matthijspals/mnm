@@ -49,8 +49,8 @@ def load_data(config):
     files = sorted(files)
     t_start, t_end = 0, 0
     for f in files:
-        spikes_df = pd.read_csv(f'{spikes_dir}/{f}', header=None)
-        spikes.append(spikes_df.to_numpy().flatten() / config['sampling_rate'])
+        spikes_df = pd.read_parquet(f'{spikes_dir}/{f}')
+        spikes.append(spikes_df['signal'].to_numpy().flatten() / config['sampling_rate'])
         t_end = max(t_end, int(np.ceil(spikes[-1].max())))
     
     # remove twenty seconds in the end  
@@ -82,9 +82,9 @@ def load_data(config):
     # load neuromodulation signal 
     neuromod_dir = os.path.join(config['data_dir'], 'neuromodulators')
     if config['deconvolve']:
-        lc_neuromod = pd.read_csv(f'{neuromod_dir}/norepinephrine_deconvolved_2.csv', header=None).to_numpy().flatten()
+        lc_neuromod = pd.read_parquet(f'{neuromod_dir}/norepinephrine_deconvolved.parquet')['signal'].to_numpy().flatten()
     else:
-        lc_neuromod = pd.read_csv(f'{neuromod_dir}/norepinephrine_full.csv', header=None).to_numpy().flatten()
+        lc_neuromod = pd.read_parquet(f'{neuromod_dir}/norepinephrine_full.parquet')['signal'].to_numpy().flatten()
     # downsample
     fs, target_fs = 1000, 1 / config['bin_size']
     downsample_factor = int(fs / target_fs)
@@ -125,12 +125,15 @@ def load_data(config):
 
         smoothed_spikes = []
         for n in range(spike_counts.shape[0]):
-            # Zero-pad on the left so the first samples have enough past context
-            original_length = spike_counts[n].shape[0]
-            padded = np.pad(spike_counts[n], (kernel_size - 1, 0))
-            # Convolve and take only the 'valid' part (no future context)
-            smoothed = convolve(padded, gaussian_kernel, mode='valid')[:original_length]
-            smoothed_spikes.append(smoothed)
+            if config['zero_pad']:
+                # Zero-pad on the left so the first samples have enough past context
+                original_length = spike_counts[n].shape[0]
+                padded = np.pad(spike_counts[n], (kernel_size - 1, 0))
+                # Convolve and take only the 'valid' part (no future context)
+                smoothed = convolve(padded, gaussian_kernel, mode='valid')[:original_length]
+                smoothed_spikes.append(smoothed)
+            else: 
+                smoothed_spikes.append(convolve(spike_counts[n], gaussian_kernel, mode='full'))
 
         spike_counts = np.array(smoothed_spikes)
 
