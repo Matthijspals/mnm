@@ -7,6 +7,7 @@ import os
 
 from vi_rnn.generate import * 
 from vi_rnn.evaluation import *
+from vi_rnn.inference import filtering_posterior, filtering_posterior_optimal_proposal
 
 import matplotlib.pyplot as plt 
 from scipy.signal import convolve
@@ -112,7 +113,7 @@ def train_VAE(
     # initialize wandb
     if sync_wandb:
         wandb.init(
-            project="vi_rnns",
+            project="mnm_rnns",
             group=task.task_params["name"],
             config={**vae.vae_params, **task.task_params, **training_params},
         )
@@ -138,10 +139,10 @@ def train_VAE(
 
     # start timer before training
     time0 = time.time()
-
+    wandb_log_plots=False
     for i in range(curr_epoch, training_params["n_epochs"]):
         with torch.no_grad():
-            if (i+1) % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
+            if i==0 or  (i+1) % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
                 vae.eval()
 
                 num_samples, num_trajs = 3000, 1 
@@ -150,17 +151,18 @@ def train_VAE(
                 for j in range(num_trajs): 
                     # generate trajectory 
                     # print('generating trajectory')
-                    _, _, lmd = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=training_params["sim_s"])
+                    _, _, lmd,spikes_pred = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1])
                     # lmd = generate_trajectory(x_test_baseline, s_test_baseline, None, vae, training_params["neuromodulation"], sim_s=training_params["sim_s"])[1]
-                    lmd = lmd.reshape(x_test_baseline.shape[0], -1)
-                    spikes_pred = torch.poisson(lmd)
-                    if j == 0: 
+                    print(lmd.shape, spikes_pred.shape,x_test_baseline.shape)
+                    spikes_pred = spikes_pred.reshape(x_test_baseline.shape[0], -1)
+                    #spikes_pred = torch.poisson(lmd)
+                    print(lmd.shape, spikes_pred.shape)
+                    if j == 0 and wandb_log_plots: 
                         fig, ax = plt.subplots(1,2, figsize=(4, 3))
                         # log spikes to wandb 
                         ax[0].imshow(x_test_baseline[:, :num_samples].cpu(), aspect='auto', cmap='Greys', interpolation="none", vmax=1)
                         ax[1].imshow(spikes_pred[:, :num_samples].cpu(), aspect='auto', cmap='Greys', interpolation="none", vmax=1)
                         wandb.log({"traces": fig})
-
                     # convolve and then mean-center the spikes for comparison 
                     kernel_size = 25
                     sigma = 5 
@@ -177,7 +179,9 @@ def train_VAE(
 
                     smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=1, keepdims=True)
                     smoothed_spikes_pred = smoothed_spikes_pred - smoothed_spikes_pred.mean(axis=1, keepdims=True) 
-                    if j == 0:
+
+
+                    if j == 0 and wandb_log_plots:
                         fig, ax = plt.subplots(3, 1, figsize=(10, 8))
                         ax[0].plot(smoothed_spikes_pred[0, :200]) 
                         ax[0].plot(smoothed_spikes[0, :200])
@@ -199,10 +203,12 @@ def train_VAE(
                 
                 kl_divs = np.array(kl_divs)
                 mres = np.array(mres)
-                wandb.log({
-                    "kl_div": kl_divs.mean(),
-                    "mres": mres.mean()
-                })
+                if sync_wandb:
+                    wandb.log({
+                        "kl_div": kl_divs.mean(),
+                        "mres": mres.mean()
+                    })
+                print(f'Epoch {i+1}, KL div: {kl_divs.mean():.4f} +/- {kl_divs.std():.4f}, MRE: {mres.mean():.4f} +/- {mres.std():.4f}')
                 # with torch.no_grad(): 
                 #     klx_bin, psH, mean_rate_error = eval_VAE(
                 #         vae,
@@ -273,7 +279,8 @@ def train_VAE(
             # forward pass
             if training_params["loss_f"] == "opt_VGTF":
                 Loss_it, Z, Esample, ll_x, ll_z, H, log_likelihood, alphas, unique_particles, det_prior, det_obs, det_posterior = (
-                    vae.forward_Optimal_VGTF(
+                   filtering_posterior_optimal_proposal(
+                       vae,
                         inputs,
                         u=stim,
                         k=training_params["k"],
@@ -286,17 +293,16 @@ def train_VAE(
                 )
             elif training_params["loss_f"] == "VGTF":
                 Loss_it, Z, Esample, ll_x, ll_z, H, log_likelihood, alphas = (
-                    vae.forward_VGTF(
+                    filtering_posterior(
+                        vae,
                         inputs,
                         u=stim,
                         k=training_params["k"],
                         resample=training_params["resample"],
-                        out_likelihood=training_params["observation_likelihood"],
                         t_forward=training_params["t_forward"],
                         s=s,
-                        sim_v=training_params["sim_v"],
-                        sim_s=training_params["sim_s"],
-                        ed_ratio=training_params["ed_ratio"]
+                        ed_ratio=training_params["ed_ratio"],
+                        encoder_padding = training_params["encoder_padding"]
 
                     )
                 )

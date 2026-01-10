@@ -15,10 +15,11 @@ from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.datasets import DTTDataset
 CUDA = True
+WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 2,
+        "rank": 4,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -36,7 +37,7 @@ if __name__ == '__main__':
         "data_dir": "data/nk339/",
         "out_dir": "models/all/",
         "bin_size": 0.05, 
-        "bs": 32, 
+        "bs": 128, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
         "epochs": 300,
@@ -52,7 +53,8 @@ if __name__ == '__main__':
         "train_alpha": True,
         "stim":True, 
         "ed_ratio": .5,
-        'center_data': False
+        'center_data': False,
+        "encoder_padding":18,
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -191,7 +193,7 @@ if __name__ == '__main__':
         seq_periods_eval = []
         
         task_params = {
-            "dur": 100,
+            "dur": 100+config["encoder_padding"],
             "n_trials": 5000,
             "name": "",
             "dataset_name": config["data_dir"],
@@ -222,27 +224,27 @@ if __name__ == '__main__':
             "init_noise_z": 0.1,
             "init_noise_z_t0": 0.1,
             "init_noise_x": 0.1,
-            "scalar_noise_z":False,#"Cov",# "Cov",
-            "scalar_noise_x": False,
-            "scalar_noise_z_t0": False,#"Cov",#"Cov",
-            "identity_readout": True,
+            "noise_z":"diag",#"Cov",# "Cov",
+            "noise_x": "diag",
+            "noise_z_t0": "diag",#"Cov",#"Cov",
+            "observation": "one_to_one",
             "activation": config["activation"],
-            "exp_par": True,
             "shared_tau": config["shared_tau"],
-            "readout_rates": "rates",
+            "readout_from": "rates",
             "train_obs_bias": False,
             "train_obs_weights": False, 
             "train_latent_bias": False,
             "train_neuron_bias": True, 
-            "orth": False,
-            "m_norm": False,
             "weight_dist": "uniform",
             "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
             "out_nonlinearity": "identity",# "softplus",
             "neuromodulation": config["neuromodulation"], 
             "train_nm_params": True,
-            "train_alpha": config["train_alpha"]
+            "train_alpha": config["train_alpha"],
+            "obs_likelihood": "Poisson",
+            "sim_v": config["sim_v"],
+            "sim_s": config["sim_s"],
         }
         # initialise training parameters
         training_params = {
@@ -260,21 +262,17 @@ if __name__ == '__main__':
             "cuda": CUDA,
             "smoothing": 20,
             "freq_cut_off": 10000,
-            "sim_obs_noise": 0,
-            "sim_latent_noise": 1,
             "opt_eps": 1e-8,
             "sim_obs_noise": 0,
             "k": config["k"],
-            "sim_v": config["sim_v"],
-            "sim_s": config["sim_s"],
             "loss_f": "VGTF",
             "resample": "systematic",  # , multinomial or none"
-            "observation_likelihood": "Poisson",  # observation likelihood,
             "neuromodulation": config["neuromodulation"],
             "ed_ratio": config["ed_ratio"],
             "x_test_baseline": x_test_baseline, 
             "s_test_baseline": s_test_baseline,
-            "stim_arr_test_baseline": stim_arr_test_baseline
+            "stim_arr_test_baseline": stim_arr_test_baseline,
+            "encoder_padding": config["encoder_padding"]
         }
         
         dim_x = task.data.shape[1]
@@ -314,7 +312,7 @@ if __name__ == '__main__':
         train_VAE(vae, 
             training_params, 
             task, 
-            sync_wandb=True, 
+            sync_wandb=WANDB_SYNC, 
             out_dir=config["out_dir"], 
             fname=fname)
 

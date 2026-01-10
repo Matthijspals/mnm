@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-
-
 def chol_cov_embed(x):
     """
     Positive semi-definite embedding of a vector as a lower triangular matrix
@@ -31,6 +29,44 @@ def full_cov_embed(x):
     cov = chol_cov_embed(x) @ (chol_cov_embed(x).T)
     return cov
 
+
+def init_noise(noise_type, dim, init_scale, train_noise):
+    """
+    Initialise noise matrices
+    Args:
+        noise_type (str): type of noise matrix to use (Full, Diag, Scalar)
+        dim (int): length/width of the noise matrix
+        init_scale (float): initial scale of the noise (standard deviation)
+        train_noise (bool): whether to train the noise matrix
+    Returns:
+        R (nn.Parameter): noise matrix
+        std_embed (function): function to embed the noise matrix as (diagonalised) standard deviation
+        var_embed (function): function to embed the noise matrix as covariance
+    """
+    if noise_type == "full":
+        R = nn.Parameter(
+            torch.eye(dim) * np.log(init_scale) * 2,
+            requires_grad=train_noise,
+        )
+        std_embed = lambda x: torch.sqrt(torch.diagonal(full_cov_embed(x)))
+        var_embed = lambda x: (full_cov_embed(x))
+    elif noise_type == "diag":
+        R = nn.Parameter(
+            torch.ones(dim) * np.log(init_scale) * 2,
+            requires_grad=train_noise,
+        )
+        std_embed = lambda log_var: torch.exp(log_var / 2)
+        var_embed = lambda log_var: torch.exp(log_var)
+    elif noise_type == "scalar":
+        R = nn.Parameter(
+            torch.ones(1) * np.log(init_scale) * 2,
+            requires_grad=train_noise,
+        )
+        std_embed = lambda log_var: torch.exp(log_var / 2).expand(dim)
+        var_embed = lambda log_var: torch.exp(log_var).expand(dim)
+    else:
+        print("invalid noise type, use full, diag, or scalar")
+    return R, std_embed, var_embed
 
 def init_AW(dz):
     """Talathi & Vartak 2016: Improving Performance of Recurrent Neural Network with ReLU Nonlinearity

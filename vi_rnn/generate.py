@@ -26,7 +26,7 @@ def get_initial_state(
         prior_mean = vae.rnn.get_initial_state(u[:, :, 0], s).unsqueeze(-1)
         prior_mean = prior_mean.expand(*prior_mean.shape[:2], k)
         if initial_state == "prior_sample":
-            if vae.rnn.params["scalar_noise_z"] == "Cov":
+            if vae.rnn.params["noise_z"] == "Cov":
                 chol_prior_t0 = chol_cov_embed(vae.rnn.R_z_t0)
                 Q_dist = torch.distributions.MultivariateNormal(
                     loc=prior_mean.squeeze(-1), scale_tril=chol_prior_t0.unsqueeze(0)
@@ -50,13 +50,13 @@ def get_initial_state(
             eff_var_prior_t0_chol = chol_cov_embed(vae.rnn.R_z_t0)
 
             # Get the observation weights and bias
-            if vae.rnn.params["readout_rates"] == "currents":
+            if vae.rnn.params["readout_from"] == "currents":
                 m = vae.rnn.transition.m
                 #print(m.shape)
                 #print( vae.rnn.observation.B.unsqueeze(-1).shape)
                 B = vae.rnn.observation.B.unsqueeze(-1) * m[:vae.dim_x]
                 B = B.T
-            elif vae.rnn.params["readout_rates"] == "z_and_v":
+            elif vae.rnn.params["readout_from"] == "z_and_v":
                 B = vae.rnn.observation.B[vae.dim_u:]
                 Bu = vae.rnn.observation.B[:vae.dim_u]
             else:
@@ -132,7 +132,7 @@ def get_initial_state(
 
 
 def generate(
-    vae, x=None, s=None, u=None, dur=None, initial_state="prior_sample", cut_off=0, k=1, sim_s=False
+    vae, x=None, s=None, u=None, dur=None, initial_state="prior_sample", cut_off=0, k=1
 ):
     """
     Sample new data from the model
@@ -176,7 +176,7 @@ def generate(
         if cut_off > 0:
             u = torch.nn.functional.pad(u, (0, cut_off))
 
-        if sim_s or s is None:
+        if vae.rnn.sim_s or s is None:
             s = torch.zeros(bs_x, vae.dim_s, u.shape[2])
         elif s is not None:
             if len(s.shape) == 2:
@@ -196,15 +196,15 @@ def generate(
                 )
         else:
             z0 = initial_state
+        if len(z0.shape) == 4: # remove time dim if present
+            z0 = z0[:,:,0]
         #print("initial state shape: " + str(z0.shape)) # n_trials x dim_z x k
     
 
         #print("get latent s eries with dur " + str(dur))
         
-        Z, v = vae.rnn.get_latent_time_series(
-            time_steps=dur, z0=z0, u=u, noise_scale=1, cut_off=cut_off, sim_v=True, s = s, sim_s=sim_s,k=k)
+        Z, v,s_tilde = vae.rnn.get_latent_time_series(
+            time_steps=dur, z0=z0, u=u, noise_scale=1, cut_off=cut_off, s = s)
+        rates, samples = vae.rnn.get_observation(Z, v=v, s=s_tilde)
         
-        rates = vae.rnn.get_observation(Z, v=v, noise_scale=0)
-        
-
-    return Z, v, rates
+    return Z, v, rates, samples

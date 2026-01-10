@@ -1,6 +1,5 @@
 import torch 
 import torch.nn as nn 
-from torch.nn.utils.parametrizations import orthogonal
 from initialize_parameterize import *
 
 class Transition(nn.Module):
@@ -16,18 +15,14 @@ class Transition(nn.Module):
         hidden_dim,
         ds,
         nonlinearity,
-        exp_par,
-        shared_tau,
+        decay=0.9,
         weight_dist="uniform",
-        m_orth=False,
-        m_norm=False,
         weight_scaler=1,
         train_latent_bias=True,
         train_neuron_bias=True,
         neuromodulation=None,
         train_nm_params=True,
-        train_alpha=True,
-        cell_types=None
+        train_decay=True,
     ):
         """
         Args:
@@ -44,7 +39,6 @@ class Transition(nn.Module):
             train_neuron_bias (bool): whether to train the bias of the neurons (x)
             neuromodulation (str): neuromodulation type(s)
             train_nm_params (bool): whether to train neuromodulation parameters
-            cell_types (torch.tensor; neurons): a mask array of +1 and -1 identifying excitatory and inhibitory neurons
         """
         super(Transition, self).__init__()
         self.dx = dx 
@@ -86,25 +80,11 @@ class Transition(nn.Module):
             print("using sigmoid activation")
             self.nonlinearity = lambda x, h: torch.sigmoid(x - h) 
             self.dnonlinearity = sigmoid_derivative  
-
-        # time constants
-        if shared_tau:
-            if exp_par:
-                self.AW = nn.Parameter(
-                    torch.log(-torch.log(torch.ones(1, 1, 1, 1) * shared_tau)),
-                    requires_grad=train_alpha
-                )
-                self.cast_A = lambda x: torch.exp(-torch.exp(x))
-            else:
-                self.AW = nn.Parameter(torch.ones(1, 1, 1, 1) * shared_tau)
-                self.cast_A = lambda x: x
         else:
-            if exp_par:
-                self.AW = init_AW_exp_par(self.dz)
-                self.cast_A = exp_par_F
-            else:
-                self.AW = init_AW(self.dz)
-                self.cast_A = lambda x: x.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+            raise ValueError(
+                "nonlinearity not recognised, use relu, clipped_relu, tanh, identity or sigmoid (logistic)"
+            )
+        self.decay_param = nn.Parameter(torch.log(-torch.log(torch.ones(1) * decay)), requires_grad=train_decay)
 
         # bias of the neurons
         if nonlinearity == "clipped_relu":
@@ -119,32 +99,17 @@ class Transition(nn.Module):
         # bias of the latents
         self.hz = nn.Parameter(torch.zeros(dz), requires_grad=train_latent_bias)
 
-         # process df with 1s and -1s for excitatory and inhibitory neurons as a vector
-        if cell_types is not None:
-            self.register_buffer('cell_type_mask', cell_types)
+      # weights (left and right singular vectors)
+        if weight_dist == "uniform":
+            self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
+        elif weight_dist == "gauss":
+            self.n, self.m = initialize_Ws_gauss(dz, hidden_dim, weight_scaler)
         else:
-            self.cell_type_mask = None
+            print("WARNING: weight distribution not implemented, using uniform")
+            self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
 
-        # weights (left and right singular vectors)
-        if not m_orth:
-            if weight_dist == "uniform":
-                self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
-            elif weight_dist == "gauss":
-                self.n, self.m = initialize_Ws_gauss(dz, hidden_dim, weight_scaler)
-            else:
-                print("WARNING: weight distribution not implemented, using uniform")
-                self.n, self.m = initialize_Ws_uniform(dz, hidden_dim)
-            self.m_transform = lambda x: x
-
-        else:
-            print("orthogonalising m")
-            # Orthonormal columns
-            self.m = orthogonal(nn.Linear(dz, hidden_dim, bias=False))
-            self.n, _ = initialize_Ws_uniform(dz, hidden_dim)
-            self.m_transform = lambda x: x.weight
         self.scaling = weight_scaler
         print("weight scaler", self.scaling)
-        # print(f"m.shape: {self.m_transform(self.m).shape}")
         # Input weights
         if self.du > 0:
             self.Wu = nn.Parameter(
@@ -159,39 +124,67 @@ class Transition(nn.Module):
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
             u (torch.tensor; n_trials x dim_u x time_steps x k): input
-            s (torch.tensor; n_trials x dim_s): neuromodulation signal
+            s (torch.tensor; n_trials x dim_s x time_steps x k): neuromodulation signal
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
-        A = self.cast_A(self.AW)
+        
         R = self.get_rates(z, s=s, v=v)
         n = self.n
 
-        if self.cell_type_mask is not None:
-            n = self.dales_law()
-
         if self.neuromodulation == 'rank':
-            s_z = (self.A @ s.T).T
-            s_z = s_z.view(s_z.shape[0], s_z.shape[1], 1, 1)
+            s_z = torch.einsum("zs,Bs...->Bz...", self.A, s)
             z = (
-                A * z
-                +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BNTK->BzTK", n * self.scaling, R)
-                + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+                self.decay * z
+                +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BN...->Bz...", n * self.scaling, R)
+                + self.hz.view(1, -1, *([1] * (len(z.shape)-2)))
             )
 
         else: 
             z = (
-                A * z
-                + torch.einsum("zN,BNTK->BzTK", n * self.scaling , R)
-                + self.hz.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+                self.decay * z
+                + torch.einsum("zN,BN...->Bz...", n * self.scaling , R)
+                + self.hz.view(1, -1, *([1] * (len(z.shape)-2)))
             )
         return z
     
-    def step_input(self, v, u):
-        A = self.cast_A(self.AW)
-        v= A*v +(1-A)*u
-        return v
+    @property
+    def decay(self):
+        return torch.exp(-torch.exp(self.decay_param)).view(1, 1, 1)
 
+    def step_input(self, v, u):
+
+        v= self.decay*v +(1-self.decay)*u
+        return v
+    
+    def get_currents(self, z, v, s):
+        """Transform latents to neuron activity, before nonlinearity
+        Args:
+            z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
+            v (torch.tensor; n_trials x dim_u x time_steps x k): filtered input
+        Returns:
+            X (torch.tensor; n_trials x dim_N x time_steps x k): neuron activity before nonlinearity
+        """
+        #print(z.shape,v.shape,s.shape)
+        X = torch.einsum("Nz,Bz...->BN...", self.m, z) + torch.einsum(
+            "Nu,Bu...->BN...", self.Wu, v
+        )
+
+        if v is not None:
+            X += torch.einsum("Nu,Bu...->BN...", self.Wu, v)
+
+        if s is not None and self.neuromodulation != "rank":
+            # transform neuromodulator signal to x space (i.e. from b x d_s -> b x d_x)
+            #s_x =  (self.A @ s.T).T
+            s_x  = torch.einsum("zs,Bs...->Bz...", self.A, s)
+
+            if self.neuromodulation == 'additive':
+                X += s_x
+
+            elif self.neuromodulation == "presynaptic": 
+                X = (1 + s_x) * X
+        return X
+    
     def get_rates(self, z, v=None, s=None):
         """Transform latents to neuron activity
         Args:
@@ -200,60 +193,13 @@ class Transition(nn.Module):
             s (torch.tensor; n_trials x dim_s): neuromodulation
         Returns:
             R (torch.tensor; n_trials x dim_N x time_steps x k): neuron activity"""
-        if len(z.shape) == 3: z = z.unsqueeze(3) # add particle dimension 
-        if v is not None and len(v.shape) == 3: v = v.unsqueeze(3)
-        m = self.m_transform(self.m)
-
-        if self.cell_type_mask is not None:
-            m = torch.abs(m) 
-
-        X = torch.einsum("Nz,BzTK->BNTK", m, z)
-    
-        if v is not None:
-            X += torch.einsum("Nu,BuTK->BNTK", self.Wu, v)
-
-        if s is not None and self.neuromodulation != "rank":
-            # transform neuromodulator signal to x space (i.e. from b x d_s -> b x d_x)
-            s_x =  (self.A @ s.T).T
-            s_x = s_x.view(s_x.shape[0], s_x.shape[1], 1, 1)
-
-            if self.neuromodulation == 'additive':
-                X += s_x
-
-            elif self.neuromodulation == "presynaptic": 
-                X = (1 + s_x) * X
-
-            elif self.neuromodulation == 'postsynaptic':
-                R = (1 + s_x) * self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
-                return R 
+        X = self.get_currents(z, v, s)
+        if (s is not None and self.neuromodulation == 'postsynaptic'):
+            #s_x =  (self.A @ s.T).T
+            s_x = torch.einsum("zs,Bs...->Bz...", self.A, s)
+            R = (1 + s_x) * self.nonlinearity(X, self.h.view(1, -1, *([1] * (len(X.shape)-2))))
+            return R 
             
-        R = self.nonlinearity(X, self.h.unsqueeze(0).unsqueeze(2).unsqueeze(3))
+        R = self.nonlinearity(X, self.h.view(1, -1, *([1] * (len(X.shape)-2))))
         return R
 
-    def jacobian(self, z):
-        """Get jacobian along trajectory
-        Args:
-            z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
-        Returns:
-            jacobian (torch.tensor; n_trials x dim_z x dim_z x time_steps): jacobian along the trajectory
-        """
-        z = z.squeeze(-1)
-        A = self.cast_A(self.AW).squeeze(-1)
-        A = diag_mid(A)
-        m = self.m_transform(self.m)
-        X = torch.einsum("Nz,BzT->BNT", m, z)
-        derivatives_act = self.dnonlinearity(X, self.h.unsqueeze(0).unsqueeze(2))
-        proj_left = self.n.unsqueeze(0).unsqueeze(-1) * derivatives_act.unsqueeze(1)
-        jacobian = A + torch.einsum("BzNT,Nx->BzxT", proj_left, m)
-        return jacobian
-
-    def dales_law(self):
-
-        # cell_type_mask is a vector of 1s and -1s (corresponding to excitatory and inhibitory neurons) w/ length n
-        # excitatory_mask is a diagonal matrix with 1s for excitatory neurons and -1s for inhibitory neurons
-        n = self.n
-        D = self.cell_type_mask.repeat((self.dz, 1))
-        
-        n = torch.abs(n) * D
-        
-        return n
