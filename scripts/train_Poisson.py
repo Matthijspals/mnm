@@ -15,7 +15,7 @@ from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.datasets import DTTDataset
 CUDA = True
-WANDB_SYNC = False
+WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
@@ -52,7 +52,7 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, 
-        "ed_ratio": .5,
+        "ed_ratio": 0,
         'center_data': False,
         "encoder_padding":18,
     }

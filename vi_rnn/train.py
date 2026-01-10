@@ -254,7 +254,7 @@ def train_VAE(
         batch_ll_z = 0
         batch_ll_x = 0
         batch_loss = 0
-
+        st_epoch = time.time()
         for data_idx, data_sample in enumerate(dataloader):
             inputs, stim = data_sample[0], data_sample[1]
             if training_params["neuromodulation"]:
@@ -348,9 +348,9 @@ def train_VAE(
             training_params["noise_z"].append(noise_z)
             training_params["noise_x"].append(noise_x)
             training_params["alphan"].append(alpha)
-
+        dur_epoch = time.time() - st_epoch
         print(
-            "epoch {} loss: {:.4f}, ll: {:.4f}, ll_x: {:.4f}, ll_z: {:.4f} H: {:.4f}, alpha: {:.2f}, lr: {:.6f}, N_z: {:.4f}, N_x: {:.4f}".format(
+            "epoch {} loss: {:.4f}, ll: {:.4f}, ll_x: {:.4f}, ll_z: {:.4f} H: {:.4f}, alpha: {:.2f}, lr: {:.6f}, N_z: {:.4f}, N_x: {:.4f}, duration: {:.2f}s".format(
                 i + 1,
                 batch_loss,
                 batch_ll,
@@ -361,6 +361,7 @@ def train_VAE(
                 scheduler.get_last_lr()[0],
                 noise_z.mean().item(),
                 noise_x.mean().item(),
+                dur_epoch
             )
         )
 

@@ -34,7 +34,7 @@ def kl_between_two_gaussians(mu0, cov0, mu1, cov1):
     return kl
 
 
-def eval_likelihood_gmm_for_diagonal_cov(z, mu, std):
+def __eval_likelihood_gmm_for_diagonal_cov_old_unstable(z, mu, std):
     """Evaluate the likelihood of z under a Gaussian mixture model with diagonal covariance matrices"""
     T, dim_x = mu.shape
     S, dim_x = z.shape
@@ -48,7 +48,31 @@ def eval_likelihood_gmm_for_diagonal_cov(z, mu, std):
     likelihood = torch.exp(-0.5 * exponent) / sqrt_det_of_cov
     return likelihood.sum(dim=0) / T
 
+def eval_likelihood_gmm_for_diagonal_cov(z, mu, std):
+    """
+    Numerically stable GMM likelihood in PyTorch using the log-sum-exp trick.
+    """
+    T, dim_x = mu.shape
+    S, _ = z.shape
+    z = z.unsqueeze(0)
+    mu = mu.unsqueeze(1)
+    
+    # Precision and squared difference
+    precision = 1 / (std**2)
+    vec = z - mu  # Broadcasting: (T, S, dim_x)
 
+    exponent = torch.einsum("TSX,TSX->TS", vec, vec)
+    exponent *= -0.5 * precision
+    
+    # Log-normalization constant
+    # log(1 / (std^dim_x)) = -dim_x * log(std)
+    log_normalization = -dim_x * torch.log(torch.tensor(std, device=z.device))
+    
+    log_likelihood_components = exponent + log_normalization
+    
+    # Log-sum-exp over the components (T) and normalize by T
+    return torch.logsumexp(log_likelihood_components, dim=0) - torch.log(torch.tensor(T, dtype=torch.float32, device=z.device))
+  
 def calc_kl_mc(mu_inf, mu_gen, scale):
     """Calculate the KL divergence between two Gaussian mixture models with diagonal covariance matrices via Monte Carlo sampling"""
 
@@ -59,17 +83,17 @@ def calc_kl_mc(mu_inf, mu_gen, scale):
     Norm = torch.randn(mu_inf[t].shape).to(device=mu_inf.device)
     z_sample = mu_inf[t] + scale * Norm
 
-    prior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_gen, scale)
-    posterior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_inf, scale)
-    prior, posterior, outlier_ratio = clean_from_outliers(prior, posterior)
+    lprior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_gen, scale)
+    lposterior = eval_likelihood_gmm_for_diagonal_cov(z_sample, mu_inf, scale)
+    #prior, posterior, outlier_ratio = clean_from_outliers(prior, posterior)
 
-    lpost = torch.log(posterior)
-    lprior = torch.log(prior)
-    kl_mc = torch.mean(lpost - lprior)
+    #lpost = torch.log(posterior)
+    #lprior = torch.log(prior)
+    kl_mc = torch.mean(lposterior - lprior)
 
-    outlier_ratio = 1 - outlier_ratio / mc_n
+    #outlier_ratio = 1 - outlier_ratio / mc_n
 
-    return kl_mc, outlier_ratio
+    return kl_mc, 0
 
 
 def calc_kl_from_data(mu_gen, data_true, num_samples=1000):
