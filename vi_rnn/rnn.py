@@ -394,15 +394,15 @@ class One_to_One_observation(nn.Module):
 
         # for Poisson we need to rectify outputs to be positive
         if obs_nonlinearity == "exp":
-            exp = torch.exp + 1e-6
-            self.nonlinearity = lambda x: exp(x) + 1e-6
+            exp = torch.exp 
+            self.nonlinearity = lambda x: exp(x)
         elif obs_nonlinearity == "relu":
-            self.nonlinearity = lambda x: torch.relu(x) + 1e-6
+            self.nonlinearity = lambda x: torch.relu(x) 
         elif obs_nonlinearity == "softplus":
             sp = torch.nn.functional.softplus
-            self.nonlinearity = lambda x: sp(x) + 1e-6
+            self.nonlinearity = lambda x: sp(x)
         elif obs_nonlinearity == "identity":
-            self.nonlinearity = lambda x:  x + 1e-6
+            self.nonlinearity = lambda x:  x 
         else:
             raise ValueError(
                 "obs_nonlinearity not recognised, use exp, relu, softplus, or identity"
@@ -417,13 +417,14 @@ class One_to_One_observation(nn.Module):
         """
 
         x = self.z_to_x_func(z, v,s_tilde)
-
+        #print(np.min(x.detach().cpu().numpy()), np.max(x.detach().cpu().numpy()))
         x = x[:, :self.dim_x]
         bias = self.Bias.view(1, -1, *([1] * len(z.shape[2:])))
         B = self.B.view(1, -1, *([1] * len(z.shape[2:])))
+        y = self.nonlinearity(B * x + bias) + 1e-6
+        #print(np.min(y.detach().cpu().numpy()), np.max(y.detach().cpu().numpy()))
 
-        return self.nonlinearity(B * x + bias)
-
+        return y
 
 
 
