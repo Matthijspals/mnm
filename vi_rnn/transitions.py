@@ -128,7 +128,7 @@ class Transition(nn.Module):
         Returns:
             z (torch.tensor; n_trials x dim_z x time_steps x k): latent time series
         """
-        
+        # pre-synaptic and additive modify the currents 
         R = self.get_rates(z, s=s, v=v)
         n = self.n
 
@@ -139,8 +139,12 @@ class Transition(nn.Module):
                 +  (torch.ones_like(s_z) + s_z) * torch.einsum("zN,BN...->Bz...", n * self.scaling, R)
                 + self.hz.view(1, -1, *([1] * (len(z.shape)-2)))
             )
-
-        else: 
+            return z
+        
+        
+        elif self.neuromodulation == 'postsynaptic':
+            s_x = torch.einsum("zs,Bs...->Bz...", self.A, s)
+            R = (1 + s_x) * R
             z = (
                 self.decay * z
                 + torch.einsum("zN,BN...->Bz...", n * self.scaling , R)
@@ -194,11 +198,6 @@ class Transition(nn.Module):
         Returns:
             R (torch.tensor; n_trials x dim_N x time_steps x k): neuron activity"""
         X = self.get_currents(z, v, s)
-        if (s is not None and self.neuromodulation == 'postsynaptic'):
-            #s_x =  (self.A @ s.T).T
-            s_x = torch.einsum("zs,Bs...->Bz...", self.A, s)
-            R = (1 + s_x) * self.nonlinearity(X, self.h.view(1, -1, *([1] * (len(X.shape)-2))))
-            return R 
             
         R = self.nonlinearity(X, self.h.view(1, -1, *([1] * (len(X.shape)-2))))
         return R

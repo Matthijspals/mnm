@@ -16,104 +16,70 @@ def ensure_length_is_even(x):
         n = len(x)
     x = np.reshape(x, (1, n))
     return x
-def fft_smoothed(x, smoothing, n_fft=None):
+
+
+def fft_smoothed(x, smoothing):
     """
-    Compute the smoothed power spectrum with optional zero-padding to n_fft.
+    Compute the smoothed power spectrum of a 1D signal
+    Args:
+        x (np.ndarray): 1D array
+        smoothing (float): smoothing parameter for the power spectrum
+    Returns:
+        fft_smoothed (np.ndarray): normalised and smoothed power spectrum
     """
     eps = 1e-8
-    
-    # If n_fft is provided, rfft handles padding. 
-    # If not, we fall back to the original behavior.
-    if n_fft is None:
-        x = ensure_length_is_even(x)
-        actual_n = len(x)
-    else:
-        actual_n = n_fft
 
-    # n=actual_n will zero-pad x if actual_n > len(x)
-    fft_real = np.fft.rfft(x, n=actual_n, norm="ortho")
-    
-    # Use actual_n for energy normalization
-    fft_magnitude = np.abs(fft_real) ** 2 * 2 / actual_n
-    
-    if smoothing is not None:
-        # Note: kernel_smoothen length will now be consistent for all trials
-        fft_smoothed_vals = kernel_smoothen(fft_magnitude, kernel_sigma=smoothing)
-        fft_smoothed_vals[fft_smoothed_vals < 0] = 0
-        return fft_smoothed_vals / (np.sum(fft_smoothed_vals) + eps)
-    else:
-        return fft_magnitude / (np.sum(fft_magnitude) + eps)
+    x = ensure_length_is_even(x)
+    fft_real = np.fft.rfft(x, norm="ortho")
+    fft_magnitude = np.abs(fft_real) ** 2 * 2 / len(x)
+    fft_smoothed = kernel_smoothen(fft_magnitude, kernel_sigma=smoothing)
+    fft_smoothed[fft_smoothed < 0] = 0
+    return fft_smoothed / (np.sum(fft_smoothed) + eps)
 
-def get_average_spectrum(trajectories, masks, smoothing):
-    """
-    Get the average power spectrum by padding all trials to the maximum length.
-    """
-    # 1. Find the maximum length across all masked trials
-    # We ensure it is even to keep rfft behavior consistent
-    lengths = [np.sum(m) for m in masks]
-    max_len = max(lengths)
-    min_len = min(lengths)
-    num_freq_bins_to_keep = (min_len // 2) + 1
-    if max_len % 2 != 0:
-        max_len += 1
+def safe_zscore(x, eps=1e-8):
+    mu = np.mean(x)
+    sigma = np.std(x)
+    if sigma < eps:
+        return x - mu          # flat signal → all zeros
+    return (x - mu) / sigma
 
-    spectrum_list = []
-    for trajectory, mask in zip(trajectories, masks):
-        # Extract the raw valid data (no truncation)
-        valid_data = trajectory[mask]
-        
-        # Z-score normalization (standard practice before FFT)
-        valid_data = zscore(valid_data)
-        
-        # Compute FFT padded to max_len
-        fft_vals = fft_smoothed(valid_data, smoothing, n_fft=max_len)
-        spectrum_list.append(fft_vals[:num_freq_bins_to_keep])
-    
-    # 2. Average across trials (all now have length max_len//2 + 1)
-    avg_spectrum = np.nanmean(np.array(spectrum_list), axis=0)
-    
-    return avg_spectrum
-def get_average_spectrum_fixed_length(trajectories, masks, smoothing, n_fft=None):
+def get_average_spectrum(trajectories, smoothing):
     """
+    Get the average power spectrum of a set of trajectories
     Args:
-        trajectories (np.ndarray): shape (trials, time) or (trials, units, time)
-        masks (list of np.ndarray): list of boolean masks
-        smoothing (float): smoothing parameter
-        n_fft (int): The length of the FFT. If None, uses the minimum 
-                     masked length to avoid interpolation artifacts.
+        trajectories (np.ndarray): set of trajectories
+        smoothing (float): smoothing parameter for the power spectrum
+    Returns:
+        spectrum (np.ndarray): average power spectrum
     """
-    # Determine common length:
-    # We use the minimum length (i.e., high freq is noise...)
-    if n_fft is None:
-        n_fft = min(np.sum(m) for m in masks)
+    spectrum = []
+    for trajectory in trajectories:
+        trajectory = safe_zscore(trajectory)
+        # check if nan in trajectory
+        if np.any(np.isnan(trajectory)):
+            print("NaN in trajectory, skipping")
+            continue
+        fft = fft_smoothed(trajectory, smoothing)
+        if np.any(np.isnan(fft)):
+            print("NaN in fft, skipping")
+            continue
+        spectrum.append(fft)
+    spectrum = np.nanmean(np.array(spectrum), axis=0)
+    return spectrum
 
-    spectra = []
-    
-    for trajectory, mask in zip(trajectories, masks):
-        # Extract valid data
-        valid_data = trajectory[mask]
-        
-        # Z-score to normalize power across trials
-        valid_data = zscore(valid_data)
-        
-        # Compute FFT with fixed length 'n'
-        # fft_smoothed should accept an 'n' parameter for the underlying np.fft.rfft
-        # If it doesn't, you may need to truncate/pad valid_data to n_fft first
-        spec = fft_smoothed(valid_data[:n_fft], smoothing) 
-        
-        spectra.append(spec)
-    
-    # Now all elements in the list have the same shape
-    avg_spectrum = np.nanmean(np.array(spectra), axis=0)
-    return avg_spectrum
+def normalize_spectrum(s):
+    total = np.sum(s)
+    if total == 0:
+        return s  # leave as all zeros
+    return s / total
 
-def power_spectrum_helling_per_dim(x_gen, x_true, masks, smoothing, freq_cutoff):
+
+def power_spectrum_helling_per_dim(x_gen, x_true, smoothing, freq_cutoff):
     """
     Compute helling distance per data dimension
     Args:
         x_gen: generated data
         x_true: true data
-        masks: masks for the data
         smoothing: smoothing parameter for the power spectrum
         freq_cutoff: cut off for the power spectrum
     Returns:
@@ -125,13 +91,12 @@ def power_spectrum_helling_per_dim(x_gen, x_true, masks, smoothing, freq_cutoff)
     dim_x = x_gen.shape[2]
     pse_corrs_per_dim = []
     for dim in range(dim_x):
-        spectrum_true = get_average_spectrum(x_true[:, :, dim], masks, smoothing)
-        spectrum_gen = get_average_spectrum(x_gen[:, :, dim], masks, smoothing)
-        if freq_cutoff is not None:
-            spectrum_true = spectrum_true[:, :freq_cutoff]
-            spectrum_gen = spectrum_gen[:, :freq_cutoff]
-        spectrum_true /= np.sum(spectrum_true)
-        spectrum_gen /= np.sum(spectrum_gen)
+        spectrum_true = get_average_spectrum(x_true[:, :, dim], smoothing)
+        spectrum_gen = get_average_spectrum(x_gen[:, :, dim], smoothing)
+        spectrum_true = spectrum_true[:, :freq_cutoff]
+        spectrum_gen = spectrum_gen[:, :freq_cutoff]
+        spectrum_true = normalize_spectrum(spectrum_true)
+        spectrum_gen = normalize_spectrum(spectrum_gen)
         hellinger_dist = (1 / np.sqrt(2)) * np.sqrt(
             np.sum((np.sqrt(spectrum_gen) - np.sqrt(spectrum_true)) ** 2)
         )
@@ -139,13 +104,12 @@ def power_spectrum_helling_per_dim(x_gen, x_true, masks, smoothing, freq_cutoff)
     return pse_corrs_per_dim
 
 
-def power_spectrum_helling(x_gen, x_true, masks, smoothing, freq_cutoff):
+def power_spectrum_helling(x_gen, x_true, smoothing, freq_cutoff):
     """
     Compute mean helling distance over data dimensions
     Args:
-        x_gen: generated data of shape (n_trials, time_steps, n_units)
-        x_true: true data of shape (n_trials, time_steps, n_units)
-        masks: masks of shape (n_trials, time_steps) for the data
+        x_gen: generated data of shape (n_trials, time_steps, dim_x)
+        x_true: true data of shape (n_trials, time_steps, dim_x)
         smoothing: smoothing parameter for the power spectrum
         freq_cutoff: cut off for the power spectrum
     Returns:
@@ -153,7 +117,7 @@ def power_spectrum_helling(x_gen, x_true, masks, smoothing, freq_cutoff):
 
     """
     pse_errors_per_dim = power_spectrum_helling_per_dim(
-        x_gen, x_true, masks, smoothing, freq_cutoff
+        x_gen, x_true, smoothing, freq_cutoff
     )
     return np.array(pse_errors_per_dim).mean(axis=0)
 

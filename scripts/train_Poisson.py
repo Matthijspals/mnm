@@ -15,7 +15,7 @@ from vi_rnn.utils import *
 from vi_rnn.evaluation import * 
 from vi_rnn.datasets import DTTDataset
 CUDA = True
-WANDB_SYNC = True
+WANDB_SYNC = False
 
 if __name__ == '__main__':
     config = {
@@ -217,7 +217,6 @@ if __name__ == '__main__':
         
         # initialise prior
         rnn_params = {
-            "clipped": False,
             "train_noise_x": True,  # False
             "train_noise_z": True,
             "train_noise_z_t0": True,
@@ -231,14 +230,14 @@ if __name__ == '__main__':
             "activation": config["activation"],
             "shared_tau": config["shared_tau"],
             "readout_from": "rates",
-            "train_obs_bias": False,
-            "train_obs_weights": False, 
+            "train_obs_bias": True,
+            "train_obs_weights": True, 
             "train_latent_bias": False,
             "train_neuron_bias": True, 
             "weight_dist": "uniform",
             "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
-            "out_nonlinearity": "identity",# "softplus",
+            "out_nonlinearity": "softplus",# "softplus",
             "neuromodulation": config["neuromodulation"], 
             "train_nm_params": True,
             "train_alpha": config["train_alpha"],
