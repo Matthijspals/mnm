@@ -13,8 +13,8 @@ def ensure_length_is_even(x):
     n = len(x)
     if n % 2 != 0:
         x = x[:-1]
-        n = len(x)
-    x = np.reshape(x, (1, n))
+        #n = len(x)
+    #x = np.reshape(x, (1, n))
     return x
 
 
@@ -32,6 +32,8 @@ def fft_smoothed(x, smoothing):
     x = ensure_length_is_even(x)
     fft_real = np.fft.rfft(x, norm="ortho")
     fft_magnitude = np.abs(fft_real) ** 2 * 2 / len(x)
+    if smoothing is None:
+        return fft_magnitude / (np.sum(fft_magnitude) + eps)
     fft_smoothed = kernel_smoothen(fft_magnitude, kernel_sigma=smoothing)
     fft_smoothed[fft_smoothed < 0] = 0
     return fft_smoothed / (np.sum(fft_smoothed) + eps)
@@ -70,9 +72,9 @@ def get_average_spectrum(trajectories, smoothing):
 def normalize_spectrum(s, eps=1e-12):
     total = np.sum(s)
     if total < eps:
-        # If silent, return a tiny uniform distribution 
-        # so it compares poorly against peaked spectra
-        return np.ones_like(s) / len(s)
+        # If silent, return a delta at zero frequency
+        s[0] = 1.0
+        return s
     return s / total
 
 
@@ -95,8 +97,9 @@ def power_spectrum_helling_per_dim(x_gen, x_true, smoothing, freq_cutoff):
     for dim in range(dim_x):
         spectrum_true = get_average_spectrum(x_true[:, :, dim], smoothing)
         spectrum_gen = get_average_spectrum(x_gen[:, :, dim], smoothing)
-        spectrum_true = spectrum_true[:, :freq_cutoff]
-        spectrum_gen = spectrum_gen[:, :freq_cutoff]
+        if freq_cutoff is not None:
+            spectrum_true = spectrum_true[:freq_cutoff]
+            spectrum_gen = spectrum_gen[:freq_cutoff]
         spectrum_true = normalize_spectrum(spectrum_true)
         spectrum_gen = normalize_spectrum(spectrum_gen)
         hellinger_dist = (1 / np.sqrt(2)) * np.sqrt(

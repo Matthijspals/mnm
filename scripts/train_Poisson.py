@@ -19,11 +19,11 @@ WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 4,
+        "rank": 6,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
-        "deconvolve": False, 
+        "deconvolve": True, 
         "convolve_spikes": False, 
         "zero_pad": True,
         "neuromodulation": "postsynaptic",
@@ -40,7 +40,7 @@ if __name__ == '__main__':
         "bs": 128, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 300,
+        "epochs": 600,
         "shuffle": False,
         "shift": 0,
         "k": 64,
@@ -52,9 +52,9 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, 
-        "ed_ratio": 0,
+        "ed_ratio": 0.5,
         'center_data': False,
-        "encoder_padding":18,
+        "encoder_padding":10,
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -282,10 +282,10 @@ if __name__ == '__main__':
         
 
         enc_params ={
-            "init_kernel_sizes": [12, 6, 2],
+            "init_kernel_sizes": [6, 3, 2],
             "nonlinearity": "gelu",
             "n_channels": [32, 16],
-            "init_scale": 0.05,
+            "init_scale": 0.1,
             "padding_location": "acausal",
             "constant_var": False,
             "padding_mode": "circular"  # reflect #reflect # constant reflect replicate or circular

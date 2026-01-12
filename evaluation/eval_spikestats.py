@@ -63,46 +63,67 @@ def eval_pairwise_corr(x, x_gen, mask=None, verbose=True, eps = 1e-6):
     return corr[offdiag], corr_gen[offdiag], r2
 
 
-def eval_spikestats(vae,x_test,s_test, u_test, initial_state="prior_sample", verbose=True, num_samples = 3000,
-             min_data_points_isi = 5, return_raw_data=False, dt=1, smooth_spikes_KL=True, smooth_sigma_KL=5, pse_smooth=20, pse_freq_cutoff=100):
+def eval_spikestats(x_test, vae=None, s_test = None, u_test = None, x_gen = None, initial_state="prior_sample", verbose=True, num_samples = 3000,
+             min_data_points_isi = 5, return_raw_data=False, dt=1, smooth_spikes_KL=True, smooth_sigma_KL=5, pse_smooth=20, pse_freq_cutoff=200
+             ):
+
+    """
+    Evaluate spiking statistics between data and generated data from VAE
+    Either pass in generated data x_gen, or pass in vae tigether with u_test and s_test to generate data
+    
+    """
 
     data_dict = {"mean_rate":0,
                 "mean_ISI":0,
                 "std_ISI":0,
                 "r2_pwcorr":0,
                 "KL_data":np.inf,
-                "power_spectr_distance":1
+                "power_spectr_distance":1,
                 }
     raw_data_dict = {"mean_rate":[] ,
                 "mean_ISI":[],
                 "std_ISI":[],
                 "pwcorr":[],
                 "KL_data":[],
-                "power_spectr_distance":[]
+                "power_spectr_distance":[],
                 }
  
     kernel_size = smooth_sigma_KL*5 
     total_gen = num_samples + 2 * kernel_size
+    # add trial dim if necessary
+    if x_test.dim() == 2:
+        x_test = x_test.unsqueeze(0)
+    x_test = x_test[:, :, :total_gen]
 
-    # add trial dimension and limit to num_samples
-    x_test = x_test.unsqueeze(0)[:,:, :total_gen]
-    u_test = u_test[:,:, :total_gen]
-    s_test = s_test[:,:, :total_gen]
-    _, _, data_gen_test, _ = generate(
-        vae,
-        u=u_test,
-        s=s_test,
-        x=x_test[:,:,:50], # only for getting the initial state
-        initial_state=initial_state,
-        k=1,
-    )
-    # check if nan in generated data
-    if torch.isnan(data_gen_test).any():
-        print("NaN in generated data!")
-        return data_dict
-        #raise ValueError("NaN in generated data!")
+    if x_gen is None:
+        print("Generating data from VAE for evaluation...")
+        assert vae is not None, "Either x_gen or vae must be provided"
+        assert s_test is not None, "s_test must be provided when vae is provided"
+        assert u_test is not None, "u_test must be provided when vae is provided"
+        # add trial dimension and limit to num_samples
+        u_test = u_test[:,:, :total_gen]
+        s_test = s_test[:,:, :total_gen]
+        _, _, _, data_gen_test = generate(
+            vae,
+            u=u_test,
+            s=s_test,
+            x=x_test[:,:,:50], # only for getting the initial state
+            initial_state=initial_state,
+            k=1,
+        )
+        # check if nan in generated data
+        if torch.isnan(data_gen_test).any():
+            print("NaN in generated data!")
+            return data_dict
+            #raise ValueError("NaN in generated data!")
 
-    data_gen_test = data_gen_test.cpu().numpy()[:,:,:,0]
+        data_gen_test = data_gen_test.cpu().numpy()[:,:,:,0]
+    else:
+        # add trial dim if necessary
+        if x_gen.dim() == 2:
+            x_gen = x_gen.unsqueeze(0)
+        data_gen_test = x_gen[:, :, :total_gen].cpu().numpy()
+    
     x_test = x_test.cpu().numpy()
     #print(x_test.shape, data_gen_test.shape)
     #(1, 184, 5760) (1, 184, 5760) # trials, units, timesteps
@@ -214,18 +235,18 @@ def eval_spikestats(vae,x_test,s_test, u_test, initial_state="prior_sample", ver
 
         gaussian_kernel = gaussian(kernel_size, sigma) 
         gaussian_kernel /= gaussian_kernel.sum() 
-        smoothed_spikes, smoothed_spikes_gen = [], []
-        for n in range(x_test.shape[1]): 
-            smoothed_spikes.append(convolve(x_test[0, n, :], gaussian_kernel, mode='full'))
-            smoothed_spikes_gen.append(convolve(data_gen_test[0, n, :], gaussian_kernel, mode='full'))
+        n_trials = x_test.shape[0]
+        smoothed_spikes, smoothed_spikes_gen = [[] for _ in range(n_trials)], [[] for _ in range(n_trials)]
+        for tr in range(n_trials):
+            for n in range(x_test.shape[1]): 
+                smoothed_spikes[tr].append(convolve(x_test[tr, n, :], gaussian_kernel, mode='full'))
+                smoothed_spikes_gen[tr].append(convolve(data_gen_test[tr, n, :], gaussian_kernel, mode='full'))
         
         smoothed_spikes = np.array(smoothed_spikes)
         smoothed_spikes_gen = np.array(smoothed_spikes_gen)
 
-        smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=1, keepdims=True)
-        smoothed_spikes_gen = smoothed_spikes_gen - smoothed_spikes_gen.mean(axis=1, keepdims=True) 
-        smoothed_spikes = smoothed_spikes[None,:,:]
-        smoothed_spikes_gen = smoothed_spikes_gen[None,:,:]
+        smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=2, keepdims=True)
+        smoothed_spikes_gen = smoothed_spikes_gen - smoothed_spikes_gen.mean(axis=2, keepdims=True) 
 
         # remove kernel convolution effects
         smoothed_spikes = smoothed_spikes[:, :, valid_start:valid_end]
@@ -236,11 +257,14 @@ def eval_spikestats(vae,x_test,s_test, u_test, initial_state="prior_sample", ver
         smoothed_spikes_gen = data_gen_test - data_gen_test.mean(axis=2, keepdims=True)
         smoothed_spikes = smoothed_spikes[:, :, valid_start:valid_end]
         smoothed_spikes_gen = smoothed_spikes_gen[:, :, valid_start:valid_end]
-    # Helling distance accross time
+    
+    # Helling distance accross time, doesn't seem to be reliable 
+    # some measure of distributional distance between power spectra
+    # would be good though...
     psH = power_spectrum_helling(smoothed_spikes_gen.transpose(0, 2, 1), smoothed_spikes.transpose(0, 2, 1), smoothing=pse_smooth, freq_cutoff=pse_freq_cutoff)
     data_dict["power_spectr_distance"] = psH
     raw_data_dict["power_spectr_distance"].append(psH)
-    # first flatten data and mask
+     # first flatten data and mask
 
     x_test = smoothed_spikes.transpose(0, 2, 1).reshape(-1, n_units)
     data_gen_test = smoothed_spikes_gen.transpose(0, 2, 1).reshape(-1, n_units)

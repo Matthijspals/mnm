@@ -82,7 +82,7 @@ def load_data(config):
     # load neuromodulation signal 
     neuromod_dir = os.path.join(config['data_dir'], 'neuromodulators')
     if config['deconvolve']:
-        lc_neuromod = pd.read_parquet(f'{neuromod_dir}/norepinephrine_deconvolved.parquet')['signal'].to_numpy().flatten()
+        lc_neuromod = pd.read_parquet(f'{neuromod_dir}/norepinephrine_deconvolved.parquet').to_numpy().flatten()
     else:
         lc_neuromod = pd.read_parquet(f'{neuromod_dir}/norepinephrine_full.parquet')['signal'].to_numpy().flatten()
     # downsample

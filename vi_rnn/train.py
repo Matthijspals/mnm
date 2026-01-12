@@ -144,10 +144,10 @@ def train_VAE(
         with torch.no_grad():
             if i==0 or  (i+1) % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
                 vae.eval()
-                num_samples, num_trajs = 3000, 1 
+                num_samples, num_trajs = 2500, 1 
 
-                data_dict = eval_spikestats(vae,
-                                            x_test=x_test_baseline,
+                data_dict = eval_spikestats(x_test = x_test_baseline,
+                                            vae=vae,
                                             s_test=s_test_baseline,
                                             u_test=stim_arr_test_baseline, 
                                             initial_state="posterior_sample",
@@ -163,88 +163,7 @@ def train_VAE(
                 if sync_wandb:
                     wandb.log(data_dict)#, commit=commit)
 
-                
-     
-                # generate trajectory 
-                # print('generating trajectory')
-                _, _, lmd,spikes_pred = generate(vae, x_test_baseline, s=s_test_baseline, u=stim_arr_test_baseline,k=1,initial_state="posterior_sample")
-                # lmd = generate_trajectory(x_test_baseline, s_test_baseline, None, vae, training_params["neuromodulation"], sim_s=training_params["sim_s"])[1]
-                spikes_pred = spikes_pred.reshape(x_test_baseline.shape[0], -1)
-                kernel_size = 25
-                sigma = 5 
-
-                gaussian_kernel = gaussian(kernel_size, sigma) 
-                gaussian_kernel /= gaussian_kernel.sum() 
-                smoothed_spikes, smoothed_spikes_pred = [], []
-                for n in range(x_test_baseline.shape[0]): 
-                    smoothed_spikes.append(convolve(x_test_baseline[n].cpu(), gaussian_kernel, mode='full'))
-                    smoothed_spikes_pred.append(convolve(spikes_pred[n].cpu(), gaussian_kernel, mode='full'))
-                
-                smoothed_spikes = np.array(smoothed_spikes)
-                smoothed_spikes_pred = np.array(smoothed_spikes_pred)
-
-                smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=1, keepdims=True)
-                smoothed_spikes_pred = smoothed_spikes_pred - smoothed_spikes_pred.mean(axis=1, keepdims=True) 
-
-                smoothed_spikes = torch.from_numpy(smoothed_spikes).to(torch.float32).to(device=device)
-                smoothed_spikes_pred = torch.from_numpy(smoothed_spikes_pred).to(torch.float32).to(device=device)
-                kl_div = compute_KL_divergence(smoothed_spikes_pred.unsqueeze(0), smoothed_spikes.unsqueeze(0), n_samples=num_samples)
-                
-                if sync_wandb:
-                    wandb.log({
-                        "kl_div":kl_div,
-                    })
-                print(f'Epoch {i+1}, KL div: {kl_div} ')
-                # with torch.no_grad(): 
-                #     klx_bin, psH, mean_rate_error = eval_VAE(
-                #         vae,
-                #         task,
-                #         cut_off=0,
-                #         smoothing=training_params["smoothing"],
-                #         freq_cut_off=training_params["freq_cut_off"],
-                #         sim_obs_noise=training_params["sim_obs_noise"],
-                #         sim_latent_noise=training_params["sim_latent_noise"],
-                #         smooth_at_eval=training_params["smooth_at_eval"],
-                #         neuromodulation=training_params["neuromodulation"]
-                #     )
-                #     training_params["KL_x"].append(klx_bin)
-                #     training_params["PSH"].append(psH)
-                #     training_params["mean_error"].append(mean_rate_error)
-
-                #     if sync_wandb:
-                #         wandb.log(
-                #             {
-                #                 "KL Div": klx_bin,
-                #                 "power_spectr_distance": psH,
-                #                 "mean_rate_error": mean_rate_error,
-                #             }
-                #         )
-
-                        # plot latent time series and reconstructions
-                        # with torch.no_grad():
-                        #     data, u = task.__getitem__(0)
-                        #     dim_x, _ = data.shape
-                        #     z_hat, Emean, Esigma, eps_s = vae.encoder(data.unsqueeze(0))
-                        #     z0 = z_hat[:, :, :1].squeeze()
-                        #     Z = vae.rnn.get_latent_time_series(
-                        #         time_steps=1000,
-                        #         z0=z0,
-                        #         noise_scale=training_params["sim_latent_noise"],
-                        #     )
-                        #     data_gen = (
-                        #         vae.rnn.get_observation(
-                        #             Z, noise_scale=training_params["sim_obs_noise"]
-                        #         )
-                        #         .permute(0, 2, 1, 3)
-                        #         .reshape(1000, dim_x)
-                        #     )
-                        # plt.figure()
-                        # plt.plot(Z[0, :, :, 0].detach().cpu().T)
-                        # plt.xlim(0)
-                        # wandb.log({"latent" + str(i): plt})
-                        # plt.figure()
-                        # plt.plot(data_gen.detach().cpu())
-                        # wandb.log({"reconstruction" + str(i): plt})
+    
 
         # set rnn to training mode
         vae.train()

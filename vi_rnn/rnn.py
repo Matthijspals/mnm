@@ -145,6 +145,8 @@ class LRRNN(nn.Module):
                 obs_nonlinearity=params["out_nonlinearity"],
             )
         elif params["observation"] == "affine":
+            print("AFFINE OBSERVATION MODEL NOT TESTED YET WITH NEUROMODULATION")
+            print("see one_to_one observation model")
             if self.readout_from == "z_and_v":
                 dim_v = self.dim_u
             elif self.readout_from == "z":
