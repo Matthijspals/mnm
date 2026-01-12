@@ -67,7 +67,7 @@ def save_model(model, training_params, task_params, name=None, directory=None):
     return directory + name
 
 
-def load_model(name, load_encoder=True):
+def load_model(name, load_encoder=True,backward_compat=True):
     """
     loads a VAE
 
@@ -96,45 +96,131 @@ def load_model(name, load_encoder=True):
         training_params = CPU_Unpickler(f).load()
     print(vae_params.keys())
     # Backwards compatibility
-    if "prior_params" in vae_params:
-        vae_params["rnn_params"] = vae_params.pop("prior_params")
-    if "neuromodulators" in vae_params["rnn_params"] and "neuromodulation_type" not in vae_params["rnn_params"]:
-        vae_params["rnn_params"]["neuromodulation_type"] = "rank"
+    if backward_compat:
+        if "prior_params" in vae_params:
+            vae_params["rnn_params"] = vae_params.pop("prior_params")
+        if "neuromodulators" in vae_params["rnn_params"] and "neuromodulation_type" not in vae_params["rnn_params"]:
+            vae_params["rnn_params"]["neuromodulation_type"] = "rank"
 
-    if vae_params["rnn_params"]["readout_rates"] == True:
-        vae_params["rnn_params"]["readout_rates"] = "rates"
-    if (
-        vae_params["rnn_params"]["activation"] == "relu"
-        and "clipped" in vae_params
-        and vae_params["prior_params"]["clipped"]
-    ):
-        vae_params["rnn_params"]["activation"] = "clipped_relu"
+        if "scalar_noise_x" in vae_params["rnn_params"]:
+                if vae_params["rnn_params"]["scalar_noise_x"] == "Cov":
+                    vae_params["rnn_params"]["noise_x"] = "full"
+                elif vae_params["rnn_params"]["scalar_noise_x"] == False:
+                    vae_params["rnn_params"]["noise_x"] = "diag"
+                else:
+                    vae_params["rnn_params"]["noise_x"] = "scalar"
 
-    if "out_nonlinearity" not in vae_params["rnn_params"]:
-        if training_params["observation_likelihood"]== "Gauss":
-            vae_params["rnn_params"]["out_nonlinearity"] = "identity"
-        elif "obs_rectify" in vae_params:
-            vae_params["rnn_params"]["out_nonlinearity"] = vae_params.pop("obs_rectify")
+        if "scalar_noise_z" in vae_params["rnn_params"]:
+            if vae_params["rnn_params"]["scalar_noise_z"] == "Cov":
+                vae_params["rnn_params"]["noise_z"] = "full"
+            elif vae_params["rnn_params"]["scalar_noise_z"] == False:
+                vae_params["rnn_params"]["noise_z"] = "diag"
+            else:
+                vae_params["rnn_params"]["noise_z"] = "scalar"
+
+        if "scalar_noise_z_t0" in vae_params["rnn_params"]:
+            if vae_params["rnn_params"]["scalar_noise_z_t0"] == "Cov":
+                vae_params["rnn_params"]["noise_z_t0"] = "full"
+            elif vae_params["rnn_params"]["scalar_noise_z_t0"] == False:
+                vae_params["rnn_params"]["noise_z_t0"] = "diag"
+            else:
+                vae_params["rnn_params"]["noise_z_t0"] = "scalar"
+
+        if "readout_rates" in vae_params["rnn_params"]:
+            vae_params["rnn_params"]["readout_from"] = vae_params["rnn_params"].pop(
+                "readout_rates"
+            )
+        if vae_params["rnn_params"]["readout_from"] == "currents":
+            pass
+        elif vae_params["rnn_params"]["readout_from"] == "rates":
+            pass
+        elif vae_params["rnn_params"]["readout_from"] is True:
+            vae_params["rnn_params"]["readout_from"] = "rates"
         else:
-            print("no out nonlinearity found, setting to identity")
-            vae_params["rnn_params"]["out_nonlinearity"] = "identity"       
-    if "cell_types" not in vae_params:
-        vae_params["cell_types"] = None      
-    if "dim_s" not in vae_params: 
-        vae_params["dim_s"] = vae_params["dim_z"]
-    if "padding_location" not in vae_params["enc_params"]:
-        if vae_params["causal"]:
-            vae_params["enc_params"]["padding_location"] = "causal"
-            vae_params["enc_architecture"] = "CNN"
-        else: 
-            vae_params["enc_params"]["padding_location"] = "acausal"
-            
+            vae_params["rnn_params"]["readout_from"] = "z"
+
+        if "observation" not in vae_params["rnn_params"]:
+            if vae_params["rnn_params"]["identity_readout"]:
+                vae_params["rnn_params"]["observation"] = "one_to_one"
+            else:
+                vae_params["rnn_params"]["observation"] = "affine"
+
+        if (
+            vae_params["rnn_params"]["activation"] == "relu"
+            and "clipped" in vae_params
+            and vae_params["prior_params"]["clipped"]
+        ):
+            vae_params["rnn_params"]["activation"] = "clipped_relu"
+
+        if "out_nonlinearity" not in vae_params["rnn_params"]:
+            if (
+                "observation_likelihood" in training_params
+                and training_params["observation_likelihood"] == "Gauss"
+            ):
+                vae_params["rnn_params"]["out_nonlinearity"] = "identity"
+            elif "obs_rectify" in vae_params:
+                vae_params["rnn_params"]["out_nonlinearity"] = vae_params.pop(
+                    "obs_rectify"
+                )
+            else:
+                print("no out nonlinearity found, setting to identity")
+                vae_params["rnn_params"]["obs_nonlinearity"] = "identity"
+
+        if "observation_likelihood" in training_params:
+            vae_params["rnn_params"]["obs_likelihood"] = training_params.pop(
+                "observation_likelihood"
+            )
+        if "obs_likelihood" not in vae_params["rnn_params"]:
+            vae_params["rnn_params"]["obs_likelihood"] = "Gauss"
+
+        if "sim_v" in training_params:
+            vae_params["rnn_params"]["sim_v"] = training_params.pop("sim_v")
+        elif "sim_v" not in vae_params["rnn_params"]:
+            vae_params["rnn_params"]["sim_v"] = False
+        if "sim_s" in training_params:
+            vae_params["rnn_params"]["sim_s"] = training_params.pop("sim_s")
+        elif "sim_s" not in vae_params["rnn_params"]:
+            vae_params["rnn_params"]["sim_s"] = False
+
+
+
+        if "cell_types" not in vae_params:
+            vae_params["cell_types"] = None      
+        if "dim_s" not in vae_params: 
+            vae_params["dim_s"] = vae_params["dim_z"]
+        if "padding_location" not in vae_params["enc_params"]:
+            if vae_params["causal"]:
+                vae_params["enc_params"]["padding_location"] = "causal"
+                vae_params["enc_architecture"] = "CNN"
+            else: 
+                vae_params["enc_params"]["padding_location"] = "acausal"
+                
     model = VAE(vae_params)
 
     # More backwards compatibility
     d = torch.load(state_dict_file_rnn, map_location=torch.device("cpu"))
-    for key in list(d.keys()):
-        d[key.replace("latent_step", "transition")] = d.pop(key)
+    if backward_compat:
+        # More backwards compatibility
+        for key in list(d.keys()):
+            d[key.replace("latent_step", "transition")] = d.pop(key)
+        if "transition.AW" in list(d.keys()):
+            d["transition.decay_param"] = d.pop("transition.AW")
+        if "transition.decay" in list(d.keys()):
+            d["transition.decay_param"] = d.pop("transition.decay")
+        d["transition.decay_param"] = d["transition.decay_param"].view(1)
+        if len(d["observation.Bias"].shape) > 1:
+            d["observation.Bias"] = d["observation.Bias"].view(
+                d["observation.Bias"].shape[1]
+            )
+        if (
+            vae_params["rnn_params"]["observation"] == "one_to_one"
+            and len(d["observation.B"].shape) > 1
+        ):
+            d["observation.B"] = torch.diagonal(
+                d["observation.B"] ** 2
+            )  # square because prev bug...
+
+
     for key in list(d.keys()):
         if key not in model.rnn.state_dict().keys():
             del d[key]

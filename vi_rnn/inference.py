@@ -30,6 +30,7 @@ def filtering_posterior(
         alphas (torch.tensor; n_trials x dim_z x time_steps): interpolation coefficients
 
     """
+    
     ll_x_func = vae.rnn.get_observation_log_likelihood
 
 
@@ -354,34 +355,6 @@ def Kalman_update_highD(eff_var_transition_chol, B, eff_var_x, mask=None):
     return alpha, one_min_alpha, Kalman_gain, var_Q_cholesky
 
 
-def diagonal_proposal(eff_var_transition, E_var, transition_mean, E_mean, mask=1.0):
-    """
-    Computes diagonal covariance of the proposal
-    Args:
-        eff_var_transition (torch.tensor; 1 x dim_z x 1): transition variance
-        E_var (torch.tensor; n_trials x dim_z x 1): encoder variance
-        transition_mean (torch.tensor; n_trials x dim_z x k): transition mean
-        E_mean (torch.tensor; n_trials x dim_z x k): encoder mean
-    Returns:
-        Qz (torch.tensor; n_trials x dim_z x k): posterior samples
-        ll_qz (torch.tensor; n_trials x k): log likelihood of the posterior
-        alpha (torch.tensor; n_trials x dim_z x 1): interpolation coefficients
-
-    """
-    precZ = 1 / eff_var_transition
-    precE = 1 / E_var
-    #print("Evar transition")
-    #print(E_var.mean())
-    #print(eff_var_transition.mean())
-    precQ = precZ + precE * mask.view(-1,1,1)
-    alpha = 1 - precZ / precQ
-    eff_var_Q = 1 / precQ
-    mean_Q = (precZ * transition_mean + precE * E_mean) * eff_var_Q
-    Q_dist = torch.distributions.Normal(loc=mean_Q, scale=torch.sqrt(eff_var_Q))
-    Qz = Q_dist.rsample()
-    ll_qz = Q_dist.log_prob(Qz).sum(axis=1)
-    #print(alpha.mean())
-    return Qz, ll_qz, alpha
 
 
 def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=None, sim_v=True, sim_s=True, ed_ratio=0.):
@@ -407,6 +380,8 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         log_likelihood (torch.tensor; n_trials): log likelihood (with averaging over particles in the log)
         alphas  (torch.tensor; n_trials x dim_z x dim_z x time_steps): interpolation coefficients
     """
+    print("WARNING: NOT YET COMPLETELY UPDATED, see filtering_posterior function for recent changes")
+    
     log_ws = []
     log_ll = []
     ll_xs = []

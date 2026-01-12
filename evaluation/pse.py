@@ -67,10 +67,12 @@ def get_average_spectrum(trajectories, smoothing):
     spectrum = np.nanmean(np.array(spectrum), axis=0)
     return spectrum
 
-def normalize_spectrum(s):
+def normalize_spectrum(s, eps=1e-12):
     total = np.sum(s)
-    if total == 0:
-        return s  # leave as all zeros
+    if total < eps:
+        # If silent, return a tiny uniform distribution 
+        # so it compares poorly against peaked spectra
+        return np.ones_like(s) / len(s)
     return s / total
 
 
