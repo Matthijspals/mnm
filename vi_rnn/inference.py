@@ -24,7 +24,7 @@ def filtering_posterior(
         Qzs (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the approximate posterior
         Esample (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the encoder
         log_xs (torch.tensor; n_trials): log likelihood of the data (with averaging over particles in the log)
-        log_pzs (torch.tensor; n_trials): log likelihood under the prior (with averaging over particles in the log)
+        log_pzs (torch.tensor; n_trials): log likelihood under the transition (with averaging over particles in the log)
         log_qzs (torch.tensor; n_trials): log likelihood /entropy under the approximate posterior (with averaging over particles in the log)
         log_likelihood (torch.tensor; n_trials): log likelihood (with averaging over particles in the log)
         alphas (torch.tensor; n_trials x dim_z x time_steps): interpolation coefficients
@@ -94,7 +94,7 @@ def filtering_posterior(
     else: 
         s_tilde = None 
 
-    # Get the initial prior mean
+    # Get the initial transition mean
     if vae.rnn.sim_v:
         transition_mean = vae.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k)
         v = torch.zeros(batch_size,vae.dim_u,1,device = x.device)
@@ -103,12 +103,14 @@ def filtering_posterior(
         transition_mean = vae.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k) #BS,Dz,K
         v = u[:, :, 0].unsqueeze(-1) 
     # Calculate the initial posterior mean and covariance
+    #Qz, ll_qz, alpha = diagonal_proposal(
+    #    eff_var_transition_t0, eff_var_enc[:, :, 0], transition_mean, mean_enc[:, :, 0], mask=torch.ones_like(ed_mask[:,0])
+    #)
     Qz, ll_qz, alpha = diagonal_proposal(
-        eff_var_transition_t0, eff_var_enc[:, :, 0], transition_mean, mean_enc[:, :, 0], mask=torch.ones_like(ed_mask[:,0])
+        eff_var_transition_t0, eff_var_enc[:, :, 0], transition_mean, mean_enc[:, :, 0], mask=ed_mask[:,0]
     )
-
     
-    # Calculate the log likelihood under the prior
+    # Calculate the log likelihood under the transition
     ll_pz = (
         torch.distributions.Normal(loc=transition_mean, scale=eff_std_transition_t0)
         .log_prob(Qz)
@@ -117,7 +119,6 @@ def filtering_posterior(
 
     # Get the observation mean and calculate likelihood of the data
     mean_x,_ = vae.rnn.get_observation(Qz, noise_scale=0, s=s_tilde, v=v)
-    mean_x = mean_x
     ll_x = ll_x_func(x_hat[:, :, 0], mean_x)
     # Calculate the log weights
     log_w = ll_x + ll_pz - ll_qz
@@ -149,12 +150,13 @@ def filtering_posterior(
             print("WARNING: resample does not exist")
             print("use, one of: multinomial, systematic, none")
         
-        # Get the prior mean
+        # Get the transition mean
         if s is not None:
-            prior_mean = vae.rnn.transition(Qz, s=s_tilde, v=v)
-        else:
-            prior_mean = vae.rnn.transition(Qz, v=v)
+            transition_mean = vae.rnn.transition(Qz, s=s_tilde, v=v)
 
+        else:
+            transition_mean = vae.rnn.transition(Qz, v=v)
+        #print(transition_mean[0, :5, 0])
         #progress input dynamics
         if vae.rnn.sim_v:
             v = vae.rnn.transition.step_input(v,u[:, :, t-1])   
@@ -171,14 +173,18 @@ def filtering_posterior(
             # Calculate the posterior mean and covariance
         Qz, ll_qz, alpha = diagonal_proposal(
         eff_var_transition, eff_var_enc[:, :, t], transition_mean, mean_enc[:, :, t], mask=ed_mask[:,t]
-    )
+        )
+        #print(s_tilde[0].detach().numpy(), transition_mean[0,:,0].detach().numpy(),Qz[0,:,0].detach().numpy())
+        #print(s_tilde.shape, transition_mean.shape, Qz.shape)
+
+    
 
         alphas.append(alpha)
         
 
-        # Calculate the log likelihood under the prior
+        # Calculate the log likelihood under the transition
         ll_pz = (
-            torch.distributions.Normal(loc=prior_mean, scale=eff_std_transition)
+            torch.distributions.Normal(loc=transition_mean, scale=eff_std_transition)
             .log_prob(Qz)
             .sum(axis=1)
         )
@@ -215,12 +221,12 @@ def filtering_posterior(
             print("WARNING: resample does not exist")
             print("use, one of: multinomial, systematic, none")
 
-        # Here prior and posterior are the same and we just need the likelihood of the data
+        # Here transition and posterior are the same and we just need the likelihood of the data
         Qz = vae.rnn(Qz, s=None, noise_scale=1)
 
         mean_x = vae.rnn.get_observation(Qz, noise_scale=0)
         ll_pz = (
-            torch.distributions.Normal(loc=prior_mean, scale=eff_std_transition)
+            torch.distributions.Normal(loc=transition_mean, scale=eff_std_transition)
             .log_prob(Qz)
             .sum(axis=1)
         )
@@ -267,7 +273,7 @@ def diagonal_proposal(
     alpha_max=0.95,
 ):
     mask_exp = mask.view(-1, 1, 1)
-
+    #print(transition_mean.detach().numpy())
 
     precZ = 1.0 / (eff_var_transition + eps)
     precE_pure_raw = 1.0 / (E_var + eps)
@@ -284,10 +290,10 @@ def diagonal_proposal(
 
     alpha = precE_masked / (precQ + eps)
     alpha = alpha.clamp(max=alpha_max)
-
+    #print(alpha[0,:,0].detach().numpy())
     # 6. Posterior mean
     mean_Q = (1.0 - alpha) * transition_mean + alpha * safe_E_mean
-
+    #print(mean_Q[0,:,0].detach().numpy(), transition_mean[0,:,0].detach().numpy())
     # 7. Sample + log-prob
     scale_Q = torch.sqrt(eff_var_Q + eps) 
     Q_dist = torch.distributions.Normal(mean_Q, scale_Q)
@@ -375,7 +381,7 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         Qzs (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the approximate posterior
         Esample (torch.tensor; n_trials x dim_z x time_steps): latent time series as predicted by the encoder
         log_xs (torch.tensor; n_trials): log likelihood of the data (with averaging over particles in the log)
-        log_pzs (torch.tensor; n_trials): log likelihood under the prior (with averaging over particles in the log)
+        log_pzs (torch.tensor; n_trials): log likelihood under the transition (with averaging over particles in the log)
         log_qzs (torch.tensor; n_trials): log likelihood /entropy under the approximate posterior (with averaging over particles in the log)
         log_likelihood (torch.tensor; n_trials): log likelihood (with averaging over particles in the log)
         alphas  (torch.tensor; n_trials x dim_z x dim_z x time_steps): interpolation coefficients
@@ -393,10 +399,10 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     unique_particles = []
 
     #project and clamp the variances
-    eff_var_prior = vae.rnn.full_cov_embed(vae.rnn.R_z)
-    eff_var_prior_t0 = vae.rnn.full_cov_embed(vae.rnn.R_z_t0)
-    eff_var_prior_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z)
-    eff_var_prior_t0_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z_t0)
+    eff_var_transition = vae.rnn.full_cov_embed(vae.rnn.R_z)
+    eff_var_transition_t0 = vae.rnn.full_cov_embed(vae.rnn.R_z_t0)
+    eff_var_transition_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z)
+    eff_var_transition_t0_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z_t0)
 
     eff_var_x = torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), 1e-8)
     eff_var_x_inv = 1.0 / torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), 1e-8)
@@ -415,13 +421,13 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     else: 
         s_tilde = s[:, :,0].unsqueeze(-1).unsqueeze(-1) if s is not None else s
 
-    # Get the initial prior mean
+    # Get the initial transition mean
     if sim_v:
-        prior_mean = vae.rnn.get_initial_state(torch.zeros_like(u[:,:,0]),  s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k)
+        transition_mean = vae.rnn.get_initial_state(torch.zeros_like(u[:,:,0]),  s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k)
         v = torch.zeros(batch_size,vae.dim_u,1,1,device = x.device)
     
     else: #initialise in the affine subspace corresponding to the input
-        prior_mean = vae.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k) #BS,Dz,K
+        transition_mean = vae.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k) #BS,Dz,K
         v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
 
     x = x.unsqueeze(-1)  # add particle dimension
@@ -440,22 +446,22 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     # Calculate the Kalman gain and interpolation alpha
     if dim_x < dim_z:
         Kalman_gain = (
-            eff_var_prior_t0
+            eff_var_transition_t0
             @ B
-            @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_prior_t0 @ B)
+            @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_transition_t0 @ B)
         )
         alpha = Kalman_gain @ B.T
         one_min_alpha = torch.eye(vae.dim_z, device=alpha.device) - alpha
 
         # Posterior Joseph stabilised Covariance
         var_Q = (
-            one_min_alpha @ eff_var_prior_t0 @ one_min_alpha.T
+            one_min_alpha @ eff_var_transition_t0 @ one_min_alpha.T
             + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
         )
 
     else:  # this is generally faster for low-rank models
         var_Q = torch.linalg.inv(
-            torch.cholesky_inverse(eff_var_prior_t0_chol)
+            torch.cholesky_inverse(eff_var_transition_t0_chol)
             + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
         )
         Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
@@ -470,7 +476,7 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     var_Q_cholesky = torch.linalg.cholesky(var_Q) 
     
     # Posterior Mean
-    mean_Q = torch.einsum("zs,BsK->BzK", one_min_alpha, prior_mean) + torch.einsum(
+    mean_Q = torch.einsum("zs,BsK->BzK", one_min_alpha, transition_mean) + torch.einsum(
         "zx,BxK->BzK", Kalman_gain, x[:, :, 0] - Obs_bias
     )
 
@@ -481,9 +487,9 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     Qz = Q_dist.rsample()
     ll_qz = Q_dist.log_prob(Qz)
 
-    # Calculate likelihood under the prior
+    # Calculate likelihood under the transition
     pz_dist = torch.distributions.MultivariateNormal(
-        loc=prior_mean.permute(0, 2, 1), scale_tril=eff_var_prior_t0_chol
+        loc=transition_mean.permute(0, 2, 1), scale_tril=eff_var_transition_t0_chol
     )
     ll_pz = pz_dist.log_prob(Qz)
 
@@ -514,8 +520,8 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     u = u.unsqueeze(-1)  # account for k
 
     # log the determinant of the posterior covariance 
-    # print(eff_var_prior_chol.shape, eff_var_x.shape)
-    det_prior = torch.diagonal(eff_var_prior_chol).log().sum().item()
+    # print(eff_var_transition_chol.shape, eff_var_x.shape)
+    det_transition = torch.diagonal(eff_var_transition_chol).log().sum().item()
     det_obs = eff_var_x.log().sum().item()
     det_posterior = torch.diagonal(var_Q_cholesky).log().sum().item()
     
@@ -540,11 +546,11 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         unique_per_batch = (sorted_idx[:, 1:] != sorted_idx[:, :-1]).sum(dim=1) + 1  # (B,)
         avg_unique = unique_per_batch.float().mean().item()      
         
-        # Get the prior mean
+        # Get the transition mean
         if s is not None:
-            prior_mean = vae.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
+            transition_mean = vae.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
         else:
-            prior_mean = vae.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
+            transition_mean = vae.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
 
         #progress input dynamics
         if sim_v:
@@ -574,7 +580,7 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         
             
         mean_Q = torch.einsum(
-            "zs,BsK->BzK", one_min_alpha, prior_mean
+            "zs,BsK->BzK", one_min_alpha, transition_mean
         ) + torch.einsum("zx,BxK->BzK", Kalman_gain, x_t)
         
         # Sample from the posterior and calculate likelihood
@@ -589,8 +595,8 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         mask = ed_mask[:,t].view(-1,1,1)
         #print(torch.sum(mask))
 
-        mean_Q = mask * mean_Q + (~mask) * prior_mean
-        var_Q_cholesky_masked = mask * var_Q_cholesky + (~mask) * eff_var_prior_chol#_expanded
+        mean_Q = mask * mean_Q + (~mask) * transition_mean
+        var_Q_cholesky_masked = mask * var_Q_cholesky + (~mask) * eff_var_transition_chol#_expanded
 
         mean_Q_flat = mean_Q.permute(0, 2, 1).reshape(batch_size * k, dim_z)          # (B*K, z)
         var_Q_cholesky_flat = var_Q_cholesky_masked.repeat_interleave(k, dim=0) # (B*K, z, z)
@@ -609,9 +615,9 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
 
 
 
-        # Calculate likelihood under the prior
+        # Calculate likelihood under the transition
         pz_dist = torch.distributions.MultivariateNormal(
-            loc=prior_mean.permute(0, 2, 1), scale_tril=eff_var_prior_chol
+            loc=transition_mean.permute(0, 2, 1), scale_tril=eff_var_transition_chol
         )
         ll_pz = pz_dist.log_prob(Qz)
 
@@ -676,7 +682,7 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         log_likelihood,
         alphas,
         unique_particles,
-        det_prior,
+        det_transition,
         det_obs,
         det_posterior
     )
