@@ -138,7 +138,7 @@ class LRRNN(nn.Module):
                     "readout_from not recognised, use rates, currents (for a one_to_one obervation model)"
                 )
             self.observation = One_to_One_observation(
-                dim_x=self.dim_N,
+                dim_x=self.dim_x,
                 z_to_x_func=z_to_x_func,
                 train_bias=params["train_obs_bias"],
                 train_weights=params["train_obs_weights"],

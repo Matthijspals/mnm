@@ -19,11 +19,11 @@ WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 4,
+        "rank": 12,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
-        "deconvolve": True, 
+        "deconvolve": False, 
         "convolve_spikes": False, 
         "zero_pad": True,
         "neuromodulation": "postsynaptic",
@@ -40,9 +40,9 @@ if __name__ == '__main__':
         "bs": 128, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 600,
+        "epochs": 300,
         "shuffle": False,
-        "shift": 0,
+        "shift": -4,
         "k": 64,
         "dales_law": False,
         "activation": "relu",
@@ -52,9 +52,9 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, 
-        "ed_ratio": 0.75,
+        "ed_ratio": 0,#.5, # dropout / regularisation of the encoder
         'center_data': False,
-        "encoder_padding":0,
+        "encoder_padding":5,
     }
 
     parser = argparse.ArgumentParser(description='train')
@@ -282,9 +282,9 @@ if __name__ == '__main__':
         
 
         enc_params ={
-            "init_kernel_sizes": [1, 1],
+            "init_kernel_sizes": [4, 2,1],
             "nonlinearity": "gelu",
-            "n_channels": [8],
+            "n_channels": [24,12],
             "init_scale": 0.1,
             "padding_location": "acausal",
             "constant_var": False,
