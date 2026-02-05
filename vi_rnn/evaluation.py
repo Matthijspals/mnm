@@ -354,7 +354,6 @@ def compute_R(vae,
                     s_test[seq_periods[j][0]:seq_periods[j][1]].view(1, 1, -1),
                     stim_arr_test, 
                     dur, 
-                    sim_s=sim_s 
                 )
                 traj_gen = traj_gen.reshape(x_test.shape[0], -1)
 

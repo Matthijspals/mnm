@@ -19,7 +19,7 @@ WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 12,
+        "rank": 6,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -40,7 +40,7 @@ if __name__ == '__main__':
         "bs": 128, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 300,
+        "epochs": 400,
         "shuffle": False,
         "shift": -4,
         "k": 64,
@@ -52,7 +52,7 @@ if __name__ == '__main__':
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, 
-        "ed_ratio": 0,#.5, # dropout / regularisation of the encoder
+        "ed_ratio": 0.5,#.5, # dropout / regularisation of the encoder
         'center_data': False,
         "encoder_padding":5,
     }
@@ -229,15 +229,15 @@ if __name__ == '__main__':
             "observation": "one_to_one",
             "activation": config["activation"],
             "shared_tau": config["shared_tau"],
-            "readout_from": "rates",
-            "train_obs_bias": False,
-            "train_obs_weights": False, 
+            "readout_from": "currents",
+            "train_obs_bias": True,
+            "train_obs_weights": True, 
             "train_latent_bias": False,
             "train_neuron_bias": True, 
             "weight_dist": "uniform",
             "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
-            "out_nonlinearity": "identity",# "softplus",
+            "out_nonlinearity": "softplus",# "softplus",
             "neuromodulation": config["neuromodulation"], 
             "train_nm_params": True,
             "train_alpha": config["train_alpha"],

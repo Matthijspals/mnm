@@ -113,6 +113,8 @@ def load_data(config):
         spike_counts = spike_counts / spike_counts.std(axis=1, keepdims=True) 
     # spike_counts = (spike_counts - np.expand_dims(spike_counts.mean(axis=1), -1)) / np.expand_dims(spike_counts.std(axis=1), -1)
     print(np.isnan(spike_counts).any())
+    #print(" CONVOLVING??? ")
+    #print(config['convolve_spikes'],config['center_data'], config['z_score_neurons'])
     if config['convolve_spikes']:
         kernel_size = 25
         sigma = 5

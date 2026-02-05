@@ -72,6 +72,7 @@ def evaluate(vae,
     was_dists = [] 
     sliced_was_dists = []
     mres = [] 
+
     for i in range(num_trajs):
         # generate trajectory 
         print('generating trajectory', flush=True)
@@ -80,10 +81,10 @@ def evaluate(vae,
         # smooth if generating spikes 
         if config["obs"] == "poisson": 
             print(stim_arr_test_baseline.shape)
-            _, _, lmd = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=config["sim_s"])
-            lmd = lmd.reshape(x_test_baseline.shape[0], -1) 
-            spikes_pred = torch.poisson(lmd) 
-
+            _, _, _,spikes = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1])
+            #lmd = lmd.reshape(x_test_baseline.shape[0], -1) 
+            #spikes_pred = torch.poisson(lmd) 
+            spikes_pred = spikes.reshape(x_test_baseline.shape[0], -1)
             kernel_size = 25 
             sigma = 5 
 
@@ -105,19 +106,36 @@ def evaluate(vae,
             # mean-center 
             traj_gen = traj_gen - traj_gen.mean(axis=1, keepdims=True)
 
+           
+            # also smooth x_test_baseline for fair comparison
+            x_test_baseline_smoothed = []
+            for n in range(x_test_baseline.shape[0]):
+                original_length = x_test_baseline[n].shape[0]
+                padded = torch.nn.functional.pad(x_test_baseline[n],
+                                    (kernel_size - 1, 0),
+                                    mode='constant',
+                                    value=0)
+                smoothed = convolve(padded.numpy(), gaussian_kernel, mode='valid')[:original_length]
+                x_test_baseline_smoothed.append(smoothed)
+            x_test_baseline_smoothed = torch.tensor(x_test_baseline_smoothed).to(torch.float32)
+            x_test_baseline_smoothed = x_test_baseline_smoothed - x_test_baseline_smoothed.mean(axis=1, keepdims=True)
+            print(x_test[:3,:3])
+            print(spikes_pred[:3,:3])
+            print(x_test.mean(), spikes_pred.mean())
+            print(x_test_baseline_smoothed.mean(), traj_gen.mean())
         elif config["obs"] == "gauss": 
             print(stim_arr_test_baseline.shape)
             _, _, traj_gen = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1], sim_s=config["sim_s"])
             traj_gen = traj_gen.reshape(x_test_baseline.shape[0], -1) 
 
         print('computing KL-div', flush=True)
-        kl_div = compute_KL_divergence(traj_gen.unsqueeze(0), x_test_baseline.unsqueeze(0), n_samples=num_samples)
+        kl_div = compute_KL_divergence(traj_gen.unsqueeze(0),     x_test_baseline_smoothed.unsqueeze(0), n_samples=num_samples)
         print('computing wasserstein', flush=True)
-        was_dist = compute_wasserstein(x_test_baseline.T.numpy(), traj_gen.T.numpy(), n_samples=num_samples)
+        was_dist = compute_wasserstein(x_test_baseline_smoothed.T.numpy(), traj_gen.T.numpy(), n_samples=num_samples)
         print('computing sliced wasserstein')
-        sliced_was_dist = sliced_wasserstein_distance(x_test_baseline, traj_gen, num_projections=100).mean()
+        sliced_was_dist = sliced_wasserstein_distance(x_test_baseline_smoothed, traj_gen, num_projections=100).mean()
         print('computing mean-rate error', flush=True)
-        mre = mean_rate(traj_gen.numpy(), x_test_baseline.numpy())
+        mre = mean_rate(traj_gen.numpy(),     x_test_baseline_smoothed.numpy())
         print(f'Sample {i}, KL Div: {kl_div}, Wasserstein: {was_dist}, Sliced Wasserstein: {sliced_was_dist}, mean-rate: {mre}', flush=True)
 
         kl_divs.append(kl_div) 
@@ -129,6 +147,9 @@ def evaluate(vae,
     stat_dict['wasserstein'] = was_dists
     stat_dict['sliced wasserstein'] = sliced_was_dist
     stat_dict['mres'] = mres
+
+    # print mean of all stats:
+    print(f'Mean KL Div: {np.mean(kl_divs)}, Mean Wasserstein: {np.mean(was_dists)}, Mean Sliced Wasserstein: {np.mean(sliced_was_dists)}, Mean MRE: {np.mean(mres)}', flush=True)
 
     population_trial_avgs = [white_noise_trial_avgs, airpuff_trial_avgs, reward_trial_avgs]
     # Now we compute the R between the mean stimulus response and the mean actual activity over trials 
@@ -153,21 +174,21 @@ def evaluate(vae,
 
 if __name__ == '__main__':
     config = {
-        "rank": 4,
+        "rank": 8,
         "z_score_neuromod": False,
         "z_score_neurons": False, 
         "min_max_norm_neuromod": True,
         "deconvolve": False, 
-        "convolve_spikes": True, 
+        "convolve_spikes": False, 
         "zero_pad": True,
         "neuromodulation": "postsynaptic",
-	    "activation": "clipped_relu",
+	    "activation": "relu",
         "dataset": "nk339_mPFC",
         "normalize_neuromod": True,
         'center_neuromod': False,
         'load_physiology': False, 
-        "sim_s": True, 
-        "sim_v": False, 
+        "sim_s": False, 
+        "sim_v": True, 
         "sampling_rate": 30_000, 
         "data_dir": "data/recordings/nk339_mPFC/",
         "out_dir": "results/model_evals/",
@@ -179,24 +200,24 @@ if __name__ == '__main__':
         "shuffle": False,
         "k": 64,
         "dales_law": False,
-        'center_data': True,
+        'center_data': False,
         "obs": "poisson",
-        "shift": 0, 
+        "shift": -4, 
     }
 
     parser = argparse.ArgumentParser(description='eval')
     parser.add_argument('-n', '--neuromodulation', help='Neuromodulation type', default='postsynaptic')
     parser.add_argument('-d', '--dataset', help='Dataset type',default='nk339_mPFC')
-    parser.add_argument('-r', '--rank', help='Rank of network',default=4)
+    parser.add_argument('-r', '--rank', help='Rank of network',default=8)
     parser.add_argument('-s', '--shuffle', help='Shuffle Neuromodulators for control', default=False)
     parser.add_argument('-k', '--particles', help='Number of particles', default=64)
     parser.add_argument('-t', '--stim', help='Add stimuli', default=True)
-    parser.add_argument('-a', '--activation', help='Activation function', default='clipped_relu')
+    parser.add_argument('-a', '--activation', help='Activation function', default='relu')
     parser.add_argument('-l', '--dales_law', help='Apply Dale\'s law', default=False)
     parser.add_argument('-z', '--bin_size', help='Bin size', default=0.05)
     parser.add_argument('-seed', '--seed', help='Random seed', default=0)
-    parser.add_argument('-obs', '--obs', help='Observation function', default=False)
-    parser.add_argument('--shift', help='Neuromodulator shift') 
+    parser.add_argument('-obs', '--obs', help='Observation function', default="poisson")
+    parser.add_argument('--shift', help='Neuromodulator shift', default=-4) 
 
     args = parser.parse_args() 
     #print(args.seed)
@@ -260,6 +281,7 @@ if __name__ == '__main__':
                                                                               trials_df, 
                                                                               config,
                                                                               test=True)
+
     # load the training samles for normalizing s_test 
     _, s_train, _, _, _, _, _ = prepare_dataset(spike_counts, 
                                                 neuromod_activity,
@@ -288,7 +310,7 @@ if __name__ == '__main__':
     was_dists = [] # wasserstein distances 
     r_vals = [] # R values for stimulus trials 
    
-    for seed in [args.seed]:#range(0, 1):
+    for seed in [6007]:#3[args.seed]:#range(0, 1):
         vae, params, task_params, training_params = load_model(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}')
         
         stat_dict = evaluate(vae, 
