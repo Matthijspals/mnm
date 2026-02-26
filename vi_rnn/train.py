@@ -197,8 +197,6 @@ def train_VAE(
                         k=training_params["k"],
                         resample=training_params["resample"],
                         s=s,
-                        sim_v=training_params["sim_v"],
-                        sim_s=training_params["sim_s"],
                         ed_ratio=training_params["ed_ratio"]
                     )
                 )

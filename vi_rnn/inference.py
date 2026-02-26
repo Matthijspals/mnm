@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from initialize_parameterize import chol_cov_embed
 
 
 def filtering_posterior(
@@ -362,8 +363,52 @@ def Kalman_update_highD(eff_var_transition_chol, B, eff_var_x, mask=None):
 
 
 
+def Kalman_update_lowD(eff_var_prior_chol, B, eff_var_x):
+    """perform Kalman update step, efficient when dim_z << dim_x"""
+    dim_z = eff_var_prior_chol.shape[0]
+    eff_var_x_inv = 1.0 / eff_var_x
 
-def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=None, sim_v=True, sim_s=True, ed_ratio=0.):
+    var_Q = torch.linalg.inv(
+        torch.cholesky_inverse(eff_var_prior_chol)
+        + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
+    )
+    Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
+    alpha = Kalman_gain @ B.T
+    one_min_alpha = torch.eye(dim_z, device=alpha.device) - alpha
+
+    var_Q = torch.eye(dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
+    var_Q_cholesky = torch.linalg.cholesky(var_Q)
+
+    return alpha, one_min_alpha, Kalman_gain, var_Q_cholesky
+
+
+def Kalman_update_highD(eff_var_prior_chol, B, eff_var_x):
+    """perform Kalman update step, efficient when dim_x >= dim_z"""
+    dim_z = eff_var_prior_chol.shape[0]
+
+    eff_var_prior = eff_var_prior_chol @ eff_var_prior_chol.T
+    Kalman_gain = (
+        eff_var_prior
+        @ B
+        @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_prior @ B)
+    )
+    alpha = Kalman_gain @ B.T
+    one_min_alpha = torch.eye(dim_z, device=alpha.device) - alpha
+
+    # Posterior Joseph stabilised Covariance
+    var_Q = (
+        one_min_alpha @ eff_var_prior @ one_min_alpha.T
+        + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
+    )
+
+    var_Q = torch.eye(dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
+    var_Q_cholesky = torch.linalg.cholesky(var_Q)
+
+    return alpha, one_min_alpha, Kalman_gain, var_Q_cholesky
+
+
+
+def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=None, ed_ratio=0.):
     """
     Forward pass of the VAE
     Note, here the approximate posterior is the optimal linear combination of the encoder and the RNN
@@ -386,7 +431,6 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         log_likelihood (torch.tensor; n_trials): log likelihood (with averaging over particles in the log)
         alphas  (torch.tensor; n_trials x dim_z x dim_z x time_steps): interpolation coefficients
     """
-    print("WARNING: NOT YET COMPLETELY UPDATED, see filtering_posterior function for recent changes")
     
     log_ws = []
     log_ll = []
@@ -397,83 +441,62 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     alphas = []
     ess = []
     unique_particles = []
-
-    #project and clamp the variances
-    eff_var_transition = vae.rnn.full_cov_embed(vae.rnn.R_z)
-    eff_var_transition_t0 = vae.rnn.full_cov_embed(vae.rnn.R_z_t0)
-    eff_var_transition_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z)
-    eff_var_transition_t0_chol = vae.rnn.chol_cov_embed(vae.rnn.R_z_t0)
-
-    eff_var_x = torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), 1e-8)
-    eff_var_x_inv = 1.0 / torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), 1e-8)
-    eff_std_x = torch.clip(vae.rnn.std_embed_x(vae.rnn.R_x), 1e-4)
-
     batch_size, dim_x, time_steps = x.shape
     dim_z = vae.dim_z
+
+
+   # Project and clamp the variances
+    eff_var_transition_chol = chol_cov_embed(vae.rnn.R_z)
+    eff_var_transition_t0_chol = chol_cov_embed(vae.rnn.R_z_t0)
+
+    eff_var_x = torch.clip(vae.rnn.var_embed_x(vae.rnn.R_x), vae.min_var)
+    eff_std_x = torch.clip(vae.rnn.std_embed_x(vae.rnn.R_x), np.sqrt(vae.min_var))
+    # set Kalman update function
+    if dim_x < dim_z * 4:
+        kalman_update = Kalman_update_highD
+    else:
+        kalman_update = Kalman_update_lowD
+
+
 
     if ed_ratio>0:
         ed_mask = torch.rand(batch_size, time_steps, device=x.device) > ed_ratio # True means use encoder
     else: 
         ed_mask = torch.ones(batch_size, time_steps, device=x.device, dtype=torch.bool)
 
-    if sim_s: 
-        s_tilde = torch.zeros(batch_size, vae.dim_s,1,1).to(device=x.device)
+    if vae.rnn.sim_s: 
+        s_tilde = torch.zeros(s.shape[0], vae.dim_s, 1,device=x.device)
+    elif s is not None: 
+        s_tilde = s[:, :, 0].unsqueeze(-1)
     else: 
-        s_tilde = s[:, :,0].unsqueeze(-1).unsqueeze(-1) if s is not None else s
+        s_tilde = None 
 
     # Get the initial transition mean
-    if sim_v:
-        transition_mean = vae.rnn.get_initial_state(torch.zeros_like(u[:,:,0]),  s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k)
-        v = torch.zeros(batch_size,vae.dim_u,1,1,device = x.device)
+    if vae.rnn.sim_v:
+        transition_mean = vae.rnn.get_initial_state(torch.zeros_like(u[:,:,0]), s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k)
+        v = torch.zeros(batch_size,vae.dim_u,1,device = x.device)
     
     else: #initialise in the affine subspace corresponding to the input
         transition_mean = vae.rnn.get_initial_state(u[:,:,0], s_tilde).unsqueeze(2).expand(batch_size,vae.dim_z,k) #BS,Dz,K
-        v = u[:, :, 0].unsqueeze(-1).unsqueeze(-1)  # add particle dimension   
+        v = u[:, :, 0].unsqueeze(-1) 
 
     x = x.unsqueeze(-1)  # add particle dimension
 
     # Get the observation weights and bias
-    if vae.rnn.params["readout_rates"] == "currents":
-        m = vae.rnn.transition.m_transform(vae.rnn.transition.m)
-        B = vae.rnn.observation.cast_B(
-            vae.rnn.observation.B
-        ).T @ m
+    if vae.rnn.params["readout_from"] == "currents":
+        m = vae.rnn.transition.m
+        B = vae.rnn.observation.B.unsqueeze(-1)  * m
         B = B.T
     else:
-        B = vae.rnn.observation.cast_B(vae.rnn.observation.B)
-    Obs_bias = vae.rnn.observation.Bias.squeeze(-1)
+        B = vae.rnn.observation.B
+    Obs_bias = vae.rnn.observation.Bias.view(1, -1, 1)
+    # Get Kalman gain
+    alpha, one_min_alpha, Kalman_gain, var_Q_cholesky = kalman_update(
+        eff_var_transition_t0_chol, B, eff_var_x
+    )
 
     # Calculate the Kalman gain and interpolation alpha
-    if dim_x < dim_z:
-        Kalman_gain = (
-            eff_var_transition_t0
-            @ B
-            @ torch.linalg.inv(torch.diag(eff_var_x) + B.T @ eff_var_transition_t0 @ B)
-        )
-        alpha = Kalman_gain @ B.T
-        one_min_alpha = torch.eye(vae.dim_z, device=alpha.device) - alpha
-
-        # Posterior Joseph stabilised Covariance
-        var_Q = (
-            one_min_alpha @ eff_var_transition_t0 @ one_min_alpha.T
-            + (Kalman_gain * torch.unsqueeze(eff_var_x, 0)) @ Kalman_gain.T
-        )
-
-    else:  # this is generally faster for low-rank models
-        var_Q = torch.linalg.inv(
-            torch.cholesky_inverse(eff_var_transition_t0_chol)
-            + (B * torch.unsqueeze(eff_var_x_inv, 0)) @ B.T
-        )
-        Kalman_gain = var_Q @ (B * torch.unsqueeze(eff_var_x_inv, 0))
-        alpha = Kalman_gain @ B.T
-        one_min_alpha = torch.eye(vae.dim_z, device=alpha.device) - alpha
-
-    # avoid numerical issues
-    var_Q = (
-        torch.eye(vae.dim_z, device=alpha.device) * 1e-8 + (var_Q + var_Q.T) / 2
-    )
     
-    var_Q_cholesky = torch.linalg.cholesky(var_Q) 
     
     # Posterior Mean
     mean_Q = torch.einsum("zs,BsK->BzK", one_min_alpha, transition_mean) + torch.einsum(
@@ -518,13 +541,13 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
     
     time_steps = x.shape[2]
     u = u.unsqueeze(-1)  # account for k
+    s = s.unsqueeze(-1) if s is not None else s  # add particle dimension
 
     # log the determinant of the posterior covariance 
     # print(eff_var_transition_chol.shape, eff_var_x.shape)
     det_transition = torch.diagonal(eff_var_transition_chol).log().sum().item()
     det_obs = eff_var_x.log().sum().item()
     det_posterior = torch.diagonal(var_Q_cholesky).log().sum().item()
-    
     # Start the loop through the time steps
     for t in range(1, time_steps):
 
@@ -548,33 +571,32 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         
         # Get the transition mean
         if s is not None:
-            transition_mean = vae.rnn.transition(Qz.unsqueeze(2), s=s_tilde, v=v).squeeze(2)
+            #print(Qz.shape, s_tilde.shape, v.shape)
+            transition_mean = vae.rnn.transition(Qz, s=s_tilde, v=v)
         else:
-            transition_mean = vae.rnn.transition(Qz.unsqueeze(2), v=v).squeeze(2)
+            transition_mean = vae.rnn.transition(Qz, v=v)
 
         #progress input dynamics
-        if sim_v:
-            v = vae.rnn.transition.step_input(v,u[:, :, t-1].unsqueeze(2))   
+        if vae.rnn.sim_v:
+            v = vae.rnn.transition.step_input(v,u[:, :, t-1])   
         else:
-            v = u[:, :, t].unsqueeze(2)
+            v = u[:, :, t]
+
 
         #progress neuromodulator dynamics 
-        if sim_s: 
-            s_tilde = vae.rnn.transition.step_input(
-                s_tilde.view(s_tilde.shape[0], s_tilde.shape[1], 1, 1), 
-                s[:, :, t-1].view(s.shape[0], s.shape[1], 1, 1))
-            s_tilde = s_tilde.view(s_tilde.shape[0], s_tilde.shape[1])        
-        else: 
-            s_tilde = s[:, :, t] if s is not None else s
+        if vae.rnn.sim_s: 
+            s_tilde = vae.rnn.transition.step_input(s_tilde, s[:,:,t-1])
+        elif s is not None: 
+            s_tilde = s[:, :, t]
 
         # Calculate the posterior mean and Joseph stabilised covariance
-        if sim_v == True:
+        if vae.rnn.sim_v == True:
             v_to_X = torch.einsum("xv, bvk -> bxk", vae.rnn.transition.Wu, v.squeeze(-2))
             x_t = x[:, :, t] - Obs_bias - v_to_X
         else:
             x_t = x[:, :, t] - Obs_bias
 
-        if sim_s: 
+        if vae.rnn.sim_s: 
             s_to_X = (vae.rnn.transition.A @ s_tilde.T).T
             x_t = x_t - s_to_X.unsqueeze(-1)
         
@@ -624,9 +646,9 @@ def filtering_posterior_optimal_proposal(vae, x, u=None, k=1, resample=False, s=
         # Get observation mean and calculate likelihood of the data
         Qz = Qz.permute(0, 2, 1)
         mean_x = torch.einsum("zx, bzk -> bxk", B, Qz) + Obs_bias
-        if sim_v == True:
+        if vae.rnn.sim_v == True:
             mean_x += v_to_X
-        if sim_s == True:
+        if vae.rnn.sim_s == True:
             mean_x += s_to_X.unsqueeze(-1)
             
         x_dist = torch.distributions.Normal(
