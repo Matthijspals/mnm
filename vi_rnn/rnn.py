@@ -214,7 +214,7 @@ class LRRNN(nn.Module):
                 self.transition.m,
                 torch.einsum("Nu,Bu->BN", self.transition.Wu, u),
             ) 
-    def get_latent_sample(self, z, noise_scale=0):
+    def get_latent_sample(self, z, noise_scale=1):
         """sample latent given mean at current timestep
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): mean at time t
@@ -235,7 +235,7 @@ class LRRNN(nn.Module):
             )
         return z_sample
 
-    def get_latent(self, z, v, s_tilde, noise_scale=0):
+    def get_latent(self, z, v, s_tilde, noise_scale=1):
         """sample and mean given z at previous timestep
         Args:
             z (torch.tensor; n_trials x dim_z x time_steps x k): z at time t-1
@@ -347,7 +347,7 @@ class LRRNN(nn.Module):
 
 
 
-    def get_observation(self, z, v=None, s=None, noise_scale=0):
+    def get_observation(self, z, v=None, s=None, noise_scale=1):
         """
         Generate observations from the latent states
         Args:
@@ -358,6 +358,10 @@ class LRRNN(nn.Module):
             X (torch.tensor; n_trials x dim_x x time_steps x k): observations
         """
         X_mean = self.observation(z,v,s)
+        #print(X_mean)
+        #print(self.observation_distribution)
+        #print(self.std_embed_x(self.R_x))
+      
         X_sample = self.get_observation_sample(X_mean, noise_scale=noise_scale)
 
         return X_mean, X_sample

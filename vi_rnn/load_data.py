@@ -106,9 +106,11 @@ def load_data(config):
     else:
         neuromod_activity = lc_neuromod
 
+    data_mean = spike_counts.mean(axis=1, keepdims=True)
+
     # mean-center the neurons 
     if config['center_data']:
-        spike_counts = spike_counts - spike_counts.mean(axis=1, keepdims=True)
+        spike_counts = spike_counts - data_mean#spike_counts.mean(axis=1, keepdims=True)
     if config['z_score_neurons']:
         spike_counts = spike_counts / spike_counts.std(axis=1, keepdims=True) 
     # spike_counts = (spike_counts - np.expand_dims(spike_counts.mean(axis=1), -1)) / np.expand_dims(spike_counts.std(axis=1), -1)
@@ -166,9 +168,9 @@ def load_data(config):
         pupil_area = np.nan_to_num(pupil_area)
         # wheel = np.nan_to_num(wheel)
 
-        return spikes, spike_counts, neuromod_activity, trials_df, whisking, pupil_area, cell_types 
+        return spikes, spike_counts, neuromod_activity, trials_df, whisking, pupil_area, cell_types
         
-    return spikes, spike_counts, neuromod_activity, trials_df, cell_types  
+    return spikes, spike_counts, neuromod_activity, trials_df, cell_types
 
 
 def get_block(spike_counts, neuromod_activity, t_start, trial_dur, bin_size, whisking=None, pupil_area=None):

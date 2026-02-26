@@ -64,7 +64,8 @@ def eval_pairwise_corr(x, x_gen, mask=None, verbose=True, eps = 1e-6):
 
 
 def eval_spikestats(x_test, vae=None, s_test = None, u_test = None, x_gen = None, initial_state="prior_sample", verbose=True, num_samples = 3000,
-             min_data_points_isi = 5, return_raw_data=False, dt=1, smooth_spikes_KL=True, smooth_sigma_KL=5, pse_smooth=20, pse_freq_cutoff=200
+             min_data_points_isi = 5, return_raw_data=False, dt=1, smooth_spikes_KL=True, smooth_sigma_KL=5, pse_smooth=20, pse_freq_cutoff=200,
+             data_mean=0, eval_spikes=True
              ):
 
     """
@@ -103,7 +104,15 @@ def eval_spikestats(x_test, vae=None, s_test = None, u_test = None, x_gen = None
         # add trial dimension and limit to num_samples
         u_test = u_test[:,:, :total_gen]
         s_test = s_test[:,:, :total_gen]
-        _, _, _, data_gen_test = generate(
+
+
+        print("STATISTICS FOR GENERATION")
+        print("shapes:", u_test.shape, s_test.shape, x_test.shape)
+        print("s_test stats: mean", s_test.mean().item(), "std", s_test.std().item())
+        print("x_test stats: mean", x_test.mean().item(), "std", x_test.std().item())
+        print("u_test stats: mean", u_test.mean().item(), "std", u_test.std().item())
+
+        _, _, data_gen_test,_ = generate(
             vae,
             u=u_test,
             s=s_test,
@@ -244,17 +253,18 @@ def eval_spikestats(x_test, vae=None, s_test = None, u_test = None, x_gen = None
         
         smoothed_spikes = np.array(smoothed_spikes)
         smoothed_spikes_gen = np.array(smoothed_spikes_gen)
-
-        smoothed_spikes = smoothed_spikes - smoothed_spikes.mean(axis=2, keepdims=True)
-        smoothed_spikes_gen = smoothed_spikes_gen - smoothed_spikes_gen.mean(axis=2, keepdims=True) 
+        print("After smoothing, shapes:", smoothed_spikes.shape, smoothed_spikes_gen.shape)
+        print(smoothed_spikes.shape, data_mean.shape)
+        smoothed_spikes = smoothed_spikes - data_mean#smoothed_spikes.mean(axis=2, keepdims=True)
+        smoothed_spikes_gen = smoothed_spikes_gen - data_mean#smoothed_spikes_gen.mean(axis=2, keepdims=True) 
 
         # remove kernel convolution effects
         smoothed_spikes = smoothed_spikes[:, :, valid_start:valid_end]
         smoothed_spikes_gen = smoothed_spikes_gen[:, :, valid_start:valid_end]
 
     else:
-        smoothed_spikes = x_test - x_test.mean(axis=2, keepdims=True)
-        smoothed_spikes_gen = data_gen_test - data_gen_test.mean(axis=2, keepdims=True)
+        smoothed_spikes = x_test - data_mean#x_test.mean(axis=2, keepdims=True)
+        smoothed_spikes_gen = data_gen_test - data_mean#data_gen_test.mean(axis=2, keepdims=True)
         smoothed_spikes = smoothed_spikes[:, :, valid_start:valid_end]
         smoothed_spikes_gen = smoothed_spikes_gen[:, :, valid_start:valid_end]
     

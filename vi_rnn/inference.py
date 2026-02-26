@@ -118,7 +118,7 @@ def filtering_posterior(
     )
 
     # Get the observation mean and calculate likelihood of the data
-    mean_x,_ = vae.rnn.get_observation(Qz, noise_scale=0, s=s_tilde, v=v)
+    mean_x,_ = vae.rnn.get_observation(Qz, noise_scale=1, s=s_tilde, v=v)
     ll_x = ll_x_func(x_hat[:, :, 0], mean_x)
     # Calculate the log weights
     log_w = ll_x + ll_pz - ll_qz
@@ -190,7 +190,7 @@ def filtering_posterior(
         )
 
         # Get the observation mean and calculate likelihood of the data
-        mean_x, _ = vae.rnn.get_observation(Qz, v=v, s=s_tilde if s is not None else s, noise_scale=0)
+        mean_x, _ = vae.rnn.get_observation(Qz, v=v, s=s_tilde if s is not None else s, noise_scale=1)
         mean_x = mean_x
         ll_x = ll_x_func(x_hat[:, :, t], mean_x, eff_std_x)
 
@@ -224,7 +224,7 @@ def filtering_posterior(
         # Here transition and posterior are the same and we just need the likelihood of the data
         Qz = vae.rnn(Qz, s=None, noise_scale=1)
 
-        mean_x = vae.rnn.get_observation(Qz, noise_scale=0)
+        mean_x, _ = vae.rnn.get_observation(Qz, noise_scale=1)
         ll_pz = (
             torch.distributions.Normal(loc=transition_mean, scale=eff_std_transition)
             .log_prob(Qz)

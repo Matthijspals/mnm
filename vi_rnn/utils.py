@@ -235,9 +235,9 @@ def get_loadings(vae):
 
     """
     prior = vae.rnn.transition
-    tau = prior.cast_A(prior.AW).detach().numpy().squeeze()
+    tau = prior.decay.detach().numpy().squeeze()
     pV = (prior.n * prior.scaling).detach().numpy()
-    pU = prior.m_transform(prior.m).detach().numpy()
+    pU = (prior.m).detach().numpy()
     pB = prior.h.detach().numpy()
     pI = prior.Wu.detach().numpy()
     return tau, pV, pU, pB, pI

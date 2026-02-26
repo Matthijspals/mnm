@@ -150,6 +150,13 @@ class Transition(nn.Module):
                 + torch.einsum("zN,BN...->Bz...", n * self.scaling , R)
                 + self.hz.view(1, -1, *([1] * (len(z.shape)-2)))
             )
+        else:
+            z = (
+                self.decay * z
+                + torch.einsum("zN,BN...->Bz...", n * self.scaling , R)
+                + self.hz.view(1, -1, *([1] * (len(z.shape)-2)))
+            )
+
         return z
     
     @property

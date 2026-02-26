@@ -109,7 +109,11 @@ def train_VAE(
     x_test_baseline = training_params["x_test_baseline"].to(device=device)
     s_test_baseline = training_params["s_test_baseline"].to(device=device).view(1, 1, -1)
     stim_arr_test_baseline = training_params["stim_arr_test_baseline"].to(device=device).unsqueeze(0)
-
+    #print(training_params.keys())
+    x_train_baseline = training_params["x_train_baseline"]
+    print("x_train_baseline shape: ", x_train_baseline.shape)
+    train_mean =np.mean(x_train_baseline,axis=(1), keepdims=True)
+    train_mean = np.array(train_mean, dtype=np.float32)
     # initialize wandb
     if sync_wandb:
         wandb.init(
@@ -142,7 +146,7 @@ def train_VAE(
     wandb_log_plots=False
     for i in range(curr_epoch, training_params["n_epochs"]):
         with torch.no_grad():
-            if i==0 or  (i+1) % training_params["eval_epochs"] == 0 and training_params["run_eval"]:
+            if (i==0 or  (i+1) % training_params["eval_epochs"] == 0) and training_params["run_eval"]:
                 vae.eval()
                 num_samples, num_trajs = 2500, 1 
 
@@ -156,10 +160,12 @@ def train_VAE(
                                             min_data_points_isi = 5, 
                                             return_raw_data=False, 
                                             dt=0.05, 
-                                            smooth_spikes_KL=True, 
+                                            smooth_spikes_KL=True if vae.rnn.params["obs_likelihood"] == "Poisson" else False, 
                                             smooth_sigma_KL=5,
                                             pse_smooth=20, 
-                                            pse_freq_cutoff=200)
+                                            pse_freq_cutoff=200,
+                                            data_mean = train_mean,
+                                            eval_spikes = True if vae.rnn.params["obs_likelihood"] == "Poisson" else False,)
                 if sync_wandb:
                     wandb.log(data_dict)#, commit=commit)
 

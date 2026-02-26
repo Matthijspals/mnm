@@ -40,7 +40,8 @@ def evaluate(vae,
              seq_periods, 
              num_samples=3000, 
              num_trajs=10,
-             use_stim=True):
+             use_stim=True,
+             data_mean=9):
     """
     Evaluates a loaded model on test data samples 
     Args:
@@ -81,6 +82,16 @@ def evaluate(vae,
         # smooth if generating spikes 
         if config["obs"] == "poisson": 
             print(stim_arr_test_baseline.shape)
+
+
+            print("STATISTICS FOR GENERATION")
+            print("shapes:", stim_arr_test_baseline.shape, s_test_baseline.shape, x_test_baseline.shape)
+            print("s_test stats: mean", s_test_baseline.mean().item(), "std", s_test_baseline.std().item())
+            print("x_test stats: mean", x_test_baseline.mean().item(), "std", x_test_baseline.std().item())
+            print("u_test stats: mean", stim_arr_test_baseline.mean().item(), "std", stim_arr_test_baseline.std().item())
+
+ 
+
             _, _, _,spikes = generate(vae, x_test_baseline, s_test_baseline, stim_arr_test_baseline, x_test_baseline.shape[1])
             #lmd = lmd.reshape(x_test_baseline.shape[0], -1) 
             #spikes_pred = torch.poisson(lmd) 
@@ -104,7 +115,8 @@ def evaluate(vae,
                 traj_gen.append(smoothed)
             traj_gen = torch.tensor(traj_gen).to(torch.float32)
             # mean-center 
-            traj_gen = traj_gen - traj_gen.mean(axis=1, keepdims=True)
+            data_mean = torch.tensor(data_mean).to(torch.float32)
+            traj_gen = traj_gen - data_mean#traj_gen.mean(axis=1, keepdims=True)
 
            
             # also smooth x_test_baseline for fair comparison
@@ -118,7 +130,8 @@ def evaluate(vae,
                 smoothed = convolve(padded.numpy(), gaussian_kernel, mode='valid')[:original_length]
                 x_test_baseline_smoothed.append(smoothed)
             x_test_baseline_smoothed = torch.tensor(x_test_baseline_smoothed).to(torch.float32)
-            x_test_baseline_smoothed = x_test_baseline_smoothed - x_test_baseline_smoothed.mean(axis=1, keepdims=True)
+            x_test_baseline_smoothed = x_test_baseline_smoothed - data_mean# x_test_baseline_smoothed.mean(axis=1, keepdims=True)
+            print(data_mean.shape, x_test_baseline_smoothed.mean(axis=1, keepdims=True).shape, traj_gen.mean(axis=1, keepdims=True).shape)
             print(x_test[:3,:3])
             print(spikes_pred[:3,:3])
             print(x_test.mean(), spikes_pred.mean())
@@ -283,11 +296,14 @@ if __name__ == '__main__':
                                                                               test=True)
 
     # load the training samles for normalizing s_test 
-    _, s_train, _, _, _, _, _ = prepare_dataset(spike_counts, 
+    x_train, s_train, _, _, _, _, _ = prepare_dataset(spike_counts, 
                                                 neuromod_activity,
                                                 trials_df, 
                                                 config,
                                                 test=False)
+    
+    data_mean = x_train.mean(axis=1, keepdims=True)
+    print(f'x_train mean: {data_mean.mean()}, x_train max: {x_train.max()}, x_train min: {x_train.min()}')
     print(f's_train max: {s_train.max()}, s_train min: {s_train.min()}')
     # min-max normalize the neuromodulation signal 
     if config["min_max_norm_neuromod"]:
@@ -311,6 +327,7 @@ if __name__ == '__main__':
     r_vals = [] # R values for stimulus trials 
    
     for seed in [6007]:#3[args.seed]:#range(0, 1):
+        print(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}')
         vae, params, task_params, training_params = load_model(f'models/all/{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}')
         
         stat_dict = evaluate(vae, 
@@ -322,7 +339,8 @@ if __name__ == '__main__':
                             airpuff_trial_avgs,
                             reward_trial_avgs, 
                             seq_periods,
-                            use_stim=config['sim_v'])
+                            use_stim=config['sim_v'],
+                            data_mean=data_mean)
         
         # save dictionary as pickle 
         result_dir = f'{config["dataset"]}_{config["neuromodulation"]}_rank_{config["rank"]}_activation_{config["activation"]}_seed_{seed}_stim_{config["sim_v"]}_binsize_{str(config["bin_size"]).replace(".", "_")}_daleslaw_{config["dales_law"]}_obs_{config["obs"]}_shift_{config["shift"]}/stat_dict.pkl'

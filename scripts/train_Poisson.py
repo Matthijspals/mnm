@@ -19,7 +19,7 @@ WANDB_SYNC = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 6,
+        "rank": 2,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -45,14 +45,14 @@ if __name__ == '__main__':
         "shift": -4,
         "k": 64,
         "dales_law": False,
-        "activation": "relu",
+        "activation": "clipped_relu",
         "learning_rate": 1e-3,
         "load_physiology": False,
         "seed": None,
         "shared_tau": 0.9,
         "train_alpha": True,
         "stim":True, 
-        "ed_ratio": 0.5,#.5, # dropout / regularisation of the encoder
+        "ed_ratio": 0.,#.5, # dropout / regularisation of the encoder
         'center_data': False,
         "encoder_padding":5,
     }
@@ -229,7 +229,7 @@ if __name__ == '__main__':
             "observation": "one_to_one",
             "activation": config["activation"],
             "shared_tau": config["shared_tau"],
-            "readout_from": "currents",
+            "readout_from": "rates",
             "train_obs_bias": True,
             "train_obs_weights": True, 
             "train_latent_bias": False,
@@ -237,7 +237,7 @@ if __name__ == '__main__':
             "weight_dist": "uniform",
             "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
-            "out_nonlinearity": "softplus",# "softplus",
+            "out_nonlinearity": "softplus",
             "neuromodulation": config["neuromodulation"], 
             "train_nm_params": True,
             "train_alpha": config["train_alpha"],
@@ -269,11 +269,12 @@ if __name__ == '__main__':
             "neuromodulation": config["neuromodulation"],
             "ed_ratio": config["ed_ratio"],
             "x_test_baseline": x_test_baseline, 
+            "x_train_baseline": x_train[:, seq_periods[0][0]:seq_periods[0][1]],
             "s_test_baseline": s_test_baseline,
             "stim_arr_test_baseline": stim_arr_test_baseline,
             "encoder_padding": config["encoder_padding"]
         }
-        
+        print("XTRAIN SHAPE", x_train.shape)
         dim_x = task.data.shape[1]
         dim_z = rank
         dim_N = N
@@ -284,7 +285,7 @@ if __name__ == '__main__':
         enc_params ={
             "init_kernel_sizes": [4, 2,1],
             "nonlinearity": "gelu",
-            "n_channels": [24,12],
+            "n_channels": [6,4],
             "init_scale": 0.1,
             "padding_location": "acausal",
             "constant_var": False,

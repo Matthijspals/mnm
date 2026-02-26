@@ -18,7 +18,7 @@ CUDA = True
 
 if __name__ == '__main__':
     config = {
-        "rank": 6,
+        "rank": 2,
         "z_score_neuromod": False, 
         "min_max_norm_neuromod": True,
         "z_score_neurons": False,
@@ -36,10 +36,10 @@ if __name__ == '__main__':
         "data_dir": "data/nk339/",
         "out_dir": "models/all/",
         "bin_size": 0.05, 
-        "bs": 32, 
+        "bs": 128, 
         "threshold_neurons": True,
         "fr_threshold": 0.5,
-        "epochs": 300,
+        "epochs": 400,
         "shuffle": False,
         "shift": 0,
         "k": 64,
@@ -52,7 +52,9 @@ if __name__ == '__main__':
         "train_alpha": True,
         "stim":True, #what is the right setting for this
         "ed_ratio": 0.5,
-        'center_data': False
+        'center_data': True,
+        "encoder_padding":5,
+
     }
 
     print(config, flush=True)
@@ -218,39 +220,38 @@ if __name__ == '__main__':
         
         # initialise prior
         rnn_params = {
-            "clipped": False,
             "train_noise_x": True,  # False
             "train_noise_z": True,
             "train_noise_z_t0": True,
             "init_noise_z": 0.1,
             "init_noise_z_t0": 0.1,
             "init_noise_x": 0.1,
-            "scalar_noise_z":False,#"Cov",# "Cov",
-            "scalar_noise_x": False,
-            "scalar_noise_z_t0": False,#"Cov",#"Cov",
-            "identity_readout": True,
+            "noise_z":"diag",#"Cov",# "Cov",
+            "noise_x": "diag",
+            "noise_z_t0": "diag",#"Cov",#"Cov",
+            "observation": "one_to_one",
             "activation": config["activation"],
-            "exp_par": True,
             "shared_tau": config["shared_tau"],
-            "readout_rates": "rates",
+            "readout_from": "currents",
             "train_obs_bias": False,
-            "train_obs_weights": True, 
+            "train_obs_weights": False, 
             "train_latent_bias": False,
             "train_neuron_bias": True, # TODO: return to True
-            "orth": False,
-            "m_norm": False,
             "weight_dist": "uniform",
             "weight_scaler": .4,  # /dim_N,
             "initial_state": "trainable",
             "out_nonlinearity": "identity",# "softplus",
             "neuromodulation": config["neuromodulation"], 
             "train_nm_params": True,
-            "train_alpha": config["train_alpha"]
+            "train_alpha": config["train_alpha"],
+            "obs_likelihood": "Gauss",
+            "sim_v": config["sim_v"],
+            "sim_s": config["sim_s"],
         }
         # initialise training parameters
         training_params = {
             "smooth_at_eval": 200,
-            "run_eval": False,
+            "run_eval": True,
             "t_forward": 0,
             "lr": config["learning_rate"],
             "step_size": 1, 
@@ -258,7 +259,7 @@ if __name__ == '__main__':
             "lr_end": 1e-4,
             "n_epochs": config["epochs"],
             "grad_norm": 10,
-            "eval_epochs": 10,
+            "eval_epochs": 50,
             "batch_size": config["bs"],
             "cuda": CUDA,
             "smoothing": 20,
@@ -268,8 +269,6 @@ if __name__ == '__main__':
             "opt_eps": 1e-8,
             "sim_obs_noise": 0,
             "k": config["k"],
-            "sim_v": config["sim_v"],
-            "sim_s": config["sim_s"],
             "loss_f": "VGTF",
             "resample": "systematic",  # , multinomial or none"
             "observation_likelihood": "Gauss",  # observation likelihood,
@@ -277,7 +276,10 @@ if __name__ == '__main__':
             "ed_ratio": config["ed_ratio"],
             "x_test_baseline": x_test_baseline, 
             "s_test_baseline": s_test_baseline,
-            "stim_arr_test_baseline": stim_arr_test_baseline
+            "x_train_baseline": x_train[:, seq_periods[0][0]:seq_periods[0][1]],
+            "stim_arr_test_baseline": stim_arr_test_baseline,
+            "encoder_padding": 5
+
         }
         
         dim_x = task.data.shape[1]
@@ -288,10 +290,10 @@ if __name__ == '__main__':
         
 
         enc_params ={
-            "init_kernel_sizes": [4, 2, 2],
+            "init_kernel_sizes": [2, 1, 1],
             "nonlinearity": "gelu",
-            "n_channels": [32, 16],
-            "init_scale": 0.05,
+            "n_channels": [8, 6],
+            "init_scale": 0.1,
             "padding_location": "acausal",
             "constant_var": False,
             "padding_mode": "constant"  # reflect #reflect # constant reflect replicate or circular
